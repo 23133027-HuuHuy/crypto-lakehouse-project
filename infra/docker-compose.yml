@@ -1,33 +1,25 @@
-version: '3.8'
-
 services:
   # ==========================================
-  # LỚP 1: INGESTION (THU THẬP DỮ LIỆU)
+  # LỚP 1: INGESTION - KAFKA KRAFT (KHÔNG CẦN ZOOKEEPER NỮA)
   # ==========================================
-  zookeeper:
-    image: bitnami/zookeeper:latest
-    container_name: lakehouse-zookeeper
-    ports:
-      - "2181:2181"
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-
   kafka:
-    image: bitnami/kafka:latest
+    image: confluentinc/cp-kafka:latest
     container_name: lakehouse-kafka
     ports:
-      - "9092:9092"   # Port cho Spark ở trong Docker gọi tới
-      - "29092:29092" # Port cho Python ở ngoài máy tính của bạn gọi tới
+      - "9092:9092"   # Cho Spark gọi
+      - "29092:29092" # Cho Python ở ngoài gọi
     environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
-      # Cấu hình 2 luồng mạng cực kỳ quan trọng để không bị lỗi kết nối
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      - KAFKA_CFG_LISTENERS=INTERNAL://:9092,EXTERNAL://:29092
-      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka:9092,EXTERNAL://localhost:29092
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
-    depends_on:
-      - zookeeper
+      # Bật chế độ KRaft (Thay thế hoàn toàn Zookeeper)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:29092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@localhost:9093'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk' # Chuỗi Base64 ID bắt buộc của KRaft
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   # ==========================================
   # LỚP 2: STORAGE (LƯU TRỮ GỐC)
@@ -36,31 +28,31 @@ services:
     image: minio/minio:latest
     container_name: lakehouse-minio
     ports:
-      - "9000:9000" # Port API (để Spark kết nối lưu Delta Lake)
-      - "9001:9001" # Port Giao diện Web (để bạn xem file)
+      - "9000:9000"
+      - "9001:9001"
     environment:
       - MINIO_ROOT_USER=admin
       - MINIO_ROOT_PASSWORD=password123
     command: server /data --console-address ":9001"
     volumes:
-      - ./minio_data:/data  # LƯU Ý QUAN TRỌNG: Lưu vĩnh viễn dữ liệu xuống ổ cứng máy bạn
+      - ./minio_data:/data
 
   # ==========================================
   # LỚP 4: API & COMPUTE (XỬ LÝ - SPARK)
   # ==========================================
   spark-master:
-    image: bitnami/spark:latest
+    image: bitnamilegacy/spark:latest
     container_name: lakehouse-spark-master
     ports:
-      - "8080:8080" # Port giao diện Web quản lý cụm Spark
-      - "7077:7077" # Port để các Worker kết nối
+      - "8080:8080"
+      - "7077:7077"
     environment:
       - SPARK_MODE=master
     volumes:
-      - ./workspace:/workspace # Nơi chứa code Python và file CSV 15GB của nhóm
+      - ./workspace:/workspace
 
   spark-worker:
-    image: bitnami/spark:latest
+    image: bitnamilegacy/spark:latest
     container_name: lakehouse-spark-worker
     environment:
       - SPARK_MODE=worker
