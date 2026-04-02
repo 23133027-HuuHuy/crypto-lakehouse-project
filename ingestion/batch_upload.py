@@ -11,9 +11,8 @@ client = Minio(
 
 bucket_name = "lakehouse"
 
-# Trỏ đến thư mục chứa file
-local_data_path = r"D:\Term2_Pharse1\BigDataAnalysyst\PROJECT_BIGDATA\crypto-lakehouse-project\crypto-lakehouse-project\infra\workspace"
-
+# CHỈNH LẠI: Trỏ đến thư mục chứa các file, không trỏ đến 1 file duy nhất
+local_data_path = r"infra\workspace"
 # --- THỰC HIỆN ---
 
 # 1. Kiểm tra và tạo Bucket
