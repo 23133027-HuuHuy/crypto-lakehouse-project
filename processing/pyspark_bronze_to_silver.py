@@ -36,6 +36,10 @@ df_bronze = spark.readStream.format("delta").load(bronze_path)
 # Thêm hàm coalesce và lit để xử lý hợp nhất từ Batch và Stream
 from pyspark.sql.functions import coalesce, lit, when
 
+# KHẮC PHỤC LỖI SCHEMA: Đảm bảo cột 'value' luôn tồn tại (Tránh crash nếu Stream chưa kịp ghi)
+if "value" not in df_bronze.columns:
+    df_bronze = df_bronze.withColumn("value", lit(None).cast("string"))
+
 # 4. Xử lý làm sạch đa luồng (Handling both Batch & Stream struct)
 df_silver = (df_bronze
     # Kiểm tra: nếu có cột 'value' (từ Stream) thì parse JSON, còn không thì None
