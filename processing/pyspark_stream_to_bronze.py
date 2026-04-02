@@ -5,13 +5,25 @@ from pyspark.sql.types import StringType
 # 1. Khởi tạo Spark (Dùng cấu hình Spark 4.1.1 và Scala 2.13 như file Batch)
 spark = (SparkSession.builder
     .appName("Lakehouse_Stream_To_Bronze")
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.1,io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.767")
+    # KHẮC PHỤC: Nâng lên hadoop-aws 3.4.0 để khớp với hadoop-client-runtime của Spark 4.1.1
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.1,io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    
+    # Ép Spark tắt bộ vi xử lý Vectorised của Hadoop
+    .config("spark.sql.parquet.enableVectorizedReader", "false")
+    .config("spark.hadoop.fs.s3a.experimental.input.fadvise", "normal")
+    
+    # KHẮC PHỤC: Thêm config timeout đúng format (milliseconds thay vì "60s")
+    .config("spark.hadoop.fs.s3a.connection.timeout", "60000")
+    .config("spark.hadoop.fs.s3a.connection.establish.timeout", "60000")
+    
     .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
     .config("spark.hadoop.fs.s3a.access.key", "admin")
     .config("spark.hadoop.fs.s3a.secret.key", "password123")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
     .getOrCreate())
 
 # 2. Đọc luồng từ Kafka

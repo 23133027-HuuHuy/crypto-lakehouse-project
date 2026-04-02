@@ -5,9 +5,17 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, L
 # 1. Khởi tạo Spark (Cấu hình đầy đủ MinIO và Delta)
 spark = (SparkSession.builder
     .appName("Lakehouse_Bronze_To_Silver")
-    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.767")
+    # KHẮC PHỤC: Nâng lên hadoop-aws 3.4.0 và delta-spark 4.1.0 để tương thích Spark 4.1.1
+    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    
+    .config("spark.sql.parquet.enableVectorizedReader", "false")
+    
+    # KHẮC PHỤC: Thêm config timeout đúng format
+    .config("spark.hadoop.fs.s3a.connection.timeout", "60000")
+    .config("spark.hadoop.fs.s3a.connection.establish.timeout", "60000")
+    
     .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
     .config("spark.hadoop.fs.s3a.access.key", "admin")
     .config("spark.hadoop.fs.s3a.secret.key", "password123")
@@ -36,9 +44,13 @@ df_bronze = spark.readStream.format("delta").load(bronze_path)
 # Thêm hàm coalesce và lit để xử lý hợp nhất từ Batch và Stream
 from pyspark.sql.functions import coalesce, lit, when
 
-# KHẮC PHỤC LỖI SCHEMA: Đảm bảo cột 'value' luôn tồn tại (Tránh crash nếu Stream chưa kịp ghi)
+# KHẮC PHỤC LỖI SCHEMA: Đảm bảo các cột luôn tồn tại dù chỉ có Stream hoặc chỉ có Batch
 if "value" not in df_bronze.columns:
     df_bronze = df_bronze.withColumn("value", lit(None).cast("string"))
+# Thêm cột Batch nếu chưa có (trường hợp Bronze chỉ có dữ liệu Stream)
+for batch_col in ["Price", "Quantity", "Timestamp"]:
+    if batch_col not in df_bronze.columns:
+        df_bronze = df_bronze.withColumn(batch_col, lit(None).cast("string"))
 
 # 4. Xử lý làm sạch đa luồng (Handling both Batch & Stream struct)
 df_silver = (df_bronze
