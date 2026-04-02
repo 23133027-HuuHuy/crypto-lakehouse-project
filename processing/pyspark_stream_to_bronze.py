@@ -34,6 +34,7 @@ query = (df_stream.writeStream
     .format("delta")
     .outputMode("append")
     .option("checkpointLocation", checkpoint_path)
+    .option("mergeSchema", "true")  # CHO PHÉP CẬP NHẬT LẠI SCHEMA (Tự thêm cột value vào bảng có sẵn)
     .start(bronze_path))
 
 print(f"Đang bắt đầu luồng Streaming từ Kafka sang Bronze tại: {bronze_path}")
