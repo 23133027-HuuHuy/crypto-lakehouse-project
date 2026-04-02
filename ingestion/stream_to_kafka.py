@@ -18,13 +18,13 @@ def on_message(ws, message):
     producer.flush() # Đẩy dữ liệu đi ngay lập tức
     
     # 3. In ra màn hình để Demo "Velocity" cho cô giáo xem
-    print(f"⚡ Real-time: Price {data['p']} | Qty {data['q']} | Time {data['T']}")
+    print(f"Real-time: Price {data['p']} | Qty {data['q']} | Time {data['T']}")
 
 def on_error(ws, error):
     print(f"Lỗi kết nối: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    print("🔌 Đã ngắt kết nối với Binance")
+    print(" Đã ngắt kết nối với Binance")
 
 # --- KẾT NỐI BINANCE WEBSOCKET ---
 socket_url = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
