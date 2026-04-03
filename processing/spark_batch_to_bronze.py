@@ -11,7 +11,7 @@ spark = (SparkSession.builder
     .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000")
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
     .config("spark.hadoop.fs.s3a.access.key", "admin")
     .config("spark.hadoop.fs.s3a.secret.key", "password123")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")

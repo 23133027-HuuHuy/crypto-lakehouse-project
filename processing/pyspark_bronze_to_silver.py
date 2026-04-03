@@ -16,7 +16,7 @@ spark = (SparkSession.builder
     .config("spark.hadoop.fs.s3a.connection.timeout", "60000")
     .config("spark.hadoop.fs.s3a.connection.establish.timeout", "60000")
     
-    .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
     .config("spark.hadoop.fs.s3a.access.key", "admin")
     .config("spark.hadoop.fs.s3a.secret.key", "password123")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")

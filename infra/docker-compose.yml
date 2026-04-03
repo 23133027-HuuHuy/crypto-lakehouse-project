@@ -38,26 +38,19 @@ services:
       - ./minio_data:/data
 
   # ==========================================
-  # LỚP 4: API & COMPUTE (XỬ LÝ - SPARK)
+  # LỚP 4: COMPUTE TỐI ƯU (SPARK LOCAL MODE TRONG DOCKER)
   # ==========================================
-  spark-master:
-    image: bitnamilegacy/spark:latest
-    container_name: lakehouse-spark-master
-    ports:
-      - "8080:8080"
-      - "7077:7077"
-    environment:
-      - SPARK_MODE=master
+  # Bỏ đi cụm Master/Worker cồng kềnh (tốn >3GB RAM).
+  # Sử dụng một Container ảo gọn nhẹ chứa sẵn môi trường Java + PySpark cho Data Engineer.
+  spark-env:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.spark
+    container_name: lakehouse-spark-env
     volumes:
-      - ./workspace:/workspace
-
-  spark-worker:
-    image: bitnamilegacy/spark:latest
-    container_name: lakehouse-spark-worker
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-    volumes:
-      - ./workspace:/workspace
+      - ../:/app
     depends_on:
-      - spark-master
+      - kafka
+      - minio
+    # Trick để container sống chờ lệnh (idle), có thể 'docker-compose exec' vào bất cứ lúc nào
+    entrypoint: ["tail", "-f", "/dev/null"]

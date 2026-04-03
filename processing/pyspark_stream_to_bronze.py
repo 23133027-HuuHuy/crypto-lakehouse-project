@@ -18,7 +18,7 @@ spark = (SparkSession.builder
     .config("spark.hadoop.fs.s3a.connection.timeout", "60000")
     .config("spark.hadoop.fs.s3a.connection.establish.timeout", "60000")
     
-    .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
+    .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
     .config("spark.hadoop.fs.s3a.access.key", "admin")
     .config("spark.hadoop.fs.s3a.secret.key", "password123")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")
@@ -29,7 +29,7 @@ spark = (SparkSession.builder
 # 2. Đọc luồng từ Kafka
 df_kafka = (spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "localhost:29092")
+    .option("kafka.bootstrap.servers", "kafka:9092")
     .option("subscribe", "binance_trades")
     .option("startingOffsets", "latest")
     .load())
