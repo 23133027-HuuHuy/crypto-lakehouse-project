@@ -12,13 +12,25 @@ TOPIC_NAME = 'binance_trades'
 def on_message(ws, message):
     # 1. Nhận dữ liệu JSON từ Binance
     data = json.loads(message)
+    normalized_data = {
+        "s": data.get("s"),
+        "p": data.get("p"),
+        "q": data.get("q"),
+        "T": data.get("T"),
+        "m": data.get("m")
+    }
     
     # 2. Đẩy dữ liệu vào Kafka topic
-    producer.produce(TOPIC_NAME, value=json.dumps(data))
+    producer.produce(TOPIC_NAME, value=json.dumps(normalized_data))
     producer.flush() # Đẩy dữ liệu đi ngay lập tức
     
     # 3. In ra màn hình để Demo "Velocity" cho cô giáo xem
-    print(f"Real-time: Price {data['p']} | Qty {data['q']} | Time {data['T']}")
+    print(
+        f"Real-time: Price {normalized_data['p']} | "
+        f"Qty {normalized_data['q']} | "
+        f"BuyerMaker {normalized_data['m']} | "
+        f"Time {normalized_data['T']}"
+    )
 
 def on_error(ws, error):
     print(f"Lỗi kết nối: {error}")

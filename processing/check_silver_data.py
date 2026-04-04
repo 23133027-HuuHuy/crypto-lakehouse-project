@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
 # 1. Khởi tạo Spark với cấu hình MinIO và Delta
 spark = (SparkSession.builder
@@ -31,8 +32,17 @@ try:
     
     # In ra 20 dòng dữ liệu mới nhất (sắp xếp theo thời gian sự kiện giảm dần)
     print("\n=== DỮ LIỆU BÊN TRONG (20 DÒNG MỚI NHẤT) ===")
-    from pyspark.sql.functions import col
     df_silver.orderBy(col("event_time").desc()).show(20, truncate=False)
+
+    print("\n=== KIỂM TRA CÁC CỘT EDA MỚI ===")
+    df_silver.select(
+        "symbol",
+        "price",
+        "quantity",
+        "quote_qty",
+        "is_buyer_maker",
+        "event_time"
+    ).orderBy(col("event_time").desc()).show(20, truncate=False)
     
     # Đếm tổng số dòng hiện có
     total_rows = df_silver.count()

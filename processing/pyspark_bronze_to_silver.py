@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, from_unixtime, to_timestamp
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+from pyspark.sql.functions import coalesce, col, from_json, from_unixtime, lit, lower, to_timestamp, when
+from pyspark.sql.types import BooleanType, DoubleType, LongType, StringType, StructField, StructType
 
 # 1. Khởi tạo Spark (Cấu hình đầy đủ MinIO và Delta)
 spark = (SparkSession.builder
@@ -33,7 +33,8 @@ json_schema = StructType([
     StructField("p", StringType(), True), # Price
     StructField("q", StringType(), True), # Quantity
     StructField("T", LongType(), True),   # Event time
-    StructField("s", StringType(), True)  # Symbol (BTCUSDT)
+    StructField("s", StringType(), True), # Symbol (BTCUSDT)
+    StructField("m", BooleanType(), True) # is buyer maker
 ])
 
 # 3. Đọc luồng dữ liệu từ lớp BRONZE
@@ -41,14 +42,11 @@ bronze_path = "s3a://lakehouse/bronze/batch_data"
 # Đọc dưới dạng Stream để bắt dữ liệu liên tục chảy từ Bronze
 df_bronze = spark.readStream.format("delta").load(bronze_path)
 
-# Thêm hàm coalesce và lit để xử lý hợp nhất từ Batch và Stream
-from pyspark.sql.functions import coalesce, lit, when
-
 # KHẮC PHỤC LỖI SCHEMA: Đảm bảo các cột luôn tồn tại dù chỉ có Stream hoặc chỉ có Batch
 if "value" not in df_bronze.columns:
     df_bronze = df_bronze.withColumn("value", lit(None).cast("string"))
 # Thêm cột Batch nếu chưa có (trường hợp Bronze chỉ có dữ liệu Stream)
-for batch_col in ["Price", "Quantity", "Timestamp"]:
+for batch_col in ["Price", "Quantity", "Quote_Qty", "Timestamp", "is_Buyer_Maker"]:
     if batch_col not in df_bronze.columns:
         df_bronze = df_bronze.withColumn(batch_col, lit(None).cast("string"))
 
@@ -56,20 +54,44 @@ for batch_col in ["Price", "Quantity", "Timestamp"]:
 df_silver = (df_bronze
     # Kiểm tra: nếu có cột 'value' (từ Stream) thì parse JSON, còn không thì None
     .withColumn("stream_data", when(col("value").isNotNull(), from_json(col("value"), json_schema)).otherwise(None))
-    .select(
-        coalesce(col("stream_data.s"), lit("BTCUSDT")).alias("symbol"),
-        
-        # Nếu Stream có giá thì lấy, nếu không lấy cột Price của luồng Batch
-        coalesce(col("stream_data.p"), col("Price")).cast(DoubleType()).alias("price"),
-        coalesce(col("stream_data.q"), col("Quantity")).cast(DoubleType()).alias("quantity"),
-        
-        # Xử lý thời gian (Unix miliseconds sang Timestamp)
+    .withColumn("price", coalesce(col("stream_data.p"), col("Price")).cast(DoubleType()))
+    .withColumn("quantity", coalesce(col("stream_data.q"), col("Quantity")).cast(DoubleType()))
+    .withColumn(
+        "quote_qty",
+        coalesce(
+            col("Quote_Qty").cast(DoubleType()),
+            (col("price") * col("quantity")).cast(DoubleType())
+        )
+    )
+    .withColumn(
+        "event_time",
         coalesce(
             to_timestamp(from_unixtime(col("stream_data.T") / 1000)),
             to_timestamp(from_unixtime(col("Timestamp").cast(DoubleType()) / 1000))
-        ).alias("event_time")
+        )
     )
-    .filter(col("price").isNotNull() & (col("price") > 0)) # Loại bỏ dữ liệu rác/lỗi
+    .withColumn(
+        "is_buyer_maker",
+        when(col("stream_data.m").isNotNull(), col("stream_data.m"))
+        .when(lower(col("is_Buyer_Maker")) == "true", lit(True))
+        .when(lower(col("is_Buyer_Maker")) == "false", lit(False))
+        .otherwise(None)
+        .cast(BooleanType())
+    )
+    .select(
+        coalesce(col("stream_data.s"), lit("BTCUSDT")).alias("symbol"),
+        col("price"),
+        col("quantity"),
+        col("quote_qty"),
+        col("event_time"),
+        col("is_buyer_maker")
+    )
+    .filter(
+        col("price").isNotNull() &
+        (col("price") > 0) &
+        col("quantity").isNotNull() &
+        (col("quantity") > 0)
+    ) # Loại bỏ dữ liệu rác/lỗi
 )
 
 # 5. Ghi xuống lớp SILVER

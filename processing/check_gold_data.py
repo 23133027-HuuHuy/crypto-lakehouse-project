@@ -18,6 +18,8 @@ spark.sparkContext.setLogLevel("WARN")
 
 gold_ohlc_path = "s3a://lakehouse/gold/OHLC_1Min"
 gold_whale_path = "s3a://lakehouse/gold/Whale_Alert"
+gold_maker_taker_path = "s3a://lakehouse/gold/maker_taker_flow_1min"
+gold_vwap_path = "s3a://lakehouse/gold/VWAP_1Min"
 
 
 def inspect_delta_table(table_name, table_path, order_column):
@@ -39,6 +41,8 @@ def inspect_delta_table(table_name, table_path, order_column):
 try:
     inspect_delta_table("OHLC_1Min", gold_ohlc_path, "candle_time")
     inspect_delta_table("Whale_Alert", gold_whale_path, "event_time")
+    inspect_delta_table("maker_taker_flow_1min", gold_maker_taker_path, "window_start")
+    inspect_delta_table("VWAP_1Min", gold_vwap_path, "window_start")
 except Exception as e:
     print(f"Co loi xay ra khi kiem tra du lieu Gold: {e}")
 
