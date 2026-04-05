@@ -102,6 +102,7 @@ query = (df_silver.writeStream
     .format("delta")
     .outputMode("append")
     .option("checkpointLocation", checkpoint_silver)
+    .option("mergeSchema", "true")
     .start(silver_path))
 
 print(f"✨ Lớp Silver đang được tinh chế tại: {silver_path}")
