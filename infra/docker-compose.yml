@@ -54,3 +54,51 @@ services:
       - minio
     # Trick để container sống chờ lệnh (idle), có thể 'docker-compose exec' vào bất cứ lúc nào
     entrypoint: ["tail", "-f", "/dev/null"]
+
+  # ==========================================
+  # LỚP 5: QUERY ENGINE - TRINO (CHO BI TOOLS)
+  # ==========================================
+  trino:
+    image: trinodb/trino:latest
+    container_name: lakehouse-trino
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+    depends_on:
+      - minio
+
+  # ==========================================
+  # LỚP 6: VISUALIZATION - METABASE
+  # ==========================================
+  metabase:
+    image: metabase/metabase:latest
+    container_name: lakehouse-metabase
+    ports:
+      - "3000:3000"
+    environment:
+      - MB_DB_TYPE=h2
+    depends_on:
+      - trino
+
+  # ==========================================
+  # LỚP 7: REST API - GOLD LAYER API
+  # ==========================================
+  gold-api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.spark
+    container_name: lakehouse-gold-api
+    ports:
+      - "5000:5000"
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - API_PORT=5000
+      - FLASK_DEBUG=false
+    volumes:
+      - ../:/app
+    depends_on:
+      - minio
+    command: ["python", "/app/api/gold_api.py"]

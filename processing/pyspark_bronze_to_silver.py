@@ -66,8 +66,10 @@ df_silver = (df_bronze
     .withColumn(
         "event_time",
         coalesce(
-            to_timestamp(from_unixtime(col("stream_data.T") / 1000)),
-            to_timestamp(from_unixtime(col("Timestamp").cast(DoubleType()) / 1000))
+            # Stream data: timestamp T là MILLISECONDS -> chia 1000
+            to_timestamp(from_unixtime(col("stream_data.T").cast(DoubleType()) / 1000.0)),
+            # Batch data: timestamp là MICROSECONDS -> chia 1000000
+            to_timestamp(from_unixtime(col("Timestamp").cast(DoubleType()) / 1000000.0))
         )
     )
     .withColumn(

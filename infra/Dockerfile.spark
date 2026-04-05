@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir \
     minio==7.2.5 \
     websocket-client==1.7.0 \
     confluent-kafka==2.3.0 \
-    findspark
+    findspark \
+    flask>=2.3.0 \
+    flask-cors>=4.0.0 \
+    pandas>=2.0.0
 
 WORKDIR /app
