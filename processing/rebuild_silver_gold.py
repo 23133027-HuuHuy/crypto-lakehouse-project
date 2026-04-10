@@ -24,7 +24,7 @@ spark = (SparkSession.builder
 spark.sparkContext.setLogLevel("WARN")
 
 # Paths
-bronze_path = "s3a://lakehouse/bronze/batch_data"
+bronze_path = "s3a://lakehouse/bronze/all_crypto_trades"
 silver_path = "s3a://lakehouse/silver/btc_trades"
 gold_ohlc_path = "s3a://lakehouse/gold/OHLC_1Min"
 gold_whale_path = "s3a://lakehouse/gold/Whale_Alert"

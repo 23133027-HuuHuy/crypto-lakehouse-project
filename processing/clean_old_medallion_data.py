@@ -25,7 +25,7 @@ spark = (SparkSession.builder
 spark.sparkContext.setLogLevel("WARN")
 
 paths_to_delete = [
-    ("Bronze data", "s3a://lakehouse/bronze/batch_data"),
+    ("Bronze data", "s3a://lakehouse/bronze/all_crypto_trades"),
     ("Silver data", "s3a://lakehouse/silver/btc_trades"),
     ("Gold OHLC_1Min", "s3a://lakehouse/gold/OHLC_1Min"),
     ("Gold Whale_Alert", "s3a://lakehouse/gold/Whale_Alert"),

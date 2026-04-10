@@ -1,0 +1,44 @@
+name: crypto-lakehouse-prefect
+prefect-version: 2.20.25
+
+build: []
+push: []
+pull: []
+
+deployments:
+  - name: batch-prod
+    entrypoint: orchestration/batch_flow.py:run_batch_pipeline
+    work_pool:
+      name: docker-pool
+      job_variables:
+        image: lakehouse-spark-env:latest
+        image_pull_policy: Never
+        auto_remove: true
+        network_mode: lakehouse-net
+        env:
+          MINIO_ENDPOINT: minio:9000
+          MINIO_ACCESS_KEY: admin
+          MINIO_SECRET_KEY: password123
+          BATCH_DATA_DIR: /app/workspace
+        volumes:
+          - /home/thachhuynh/BA/crypto-lakehouse-project:/app
+          - /home/thachhuynh/BA/crypto-lakehouse-project/infra/workspace:/app/workspace
+    schedules:
+      - cron: "0 */2 * * *"
+        timezone: "Asia/Ho_Chi_Minh"
+
+  - name: monitor-prod
+    entrypoint: orchestration/monitor_flow.py:monitor_streaming_services
+    work_pool:
+      name: docker-pool
+      job_variables:
+        image: lakehouse-spark-env:latest
+        image_pull_policy: Never
+        auto_remove: true
+        network_mode: lakehouse-net
+        volumes:
+          - /home/thachhuynh/BA/crypto-lakehouse-project:/app
+          - /var/run/docker.sock:/var/run/docker.sock
+    schedules:
+      - cron: "*/2 * * * *"
+        timezone: "Asia/Ho_Chi_Minh"

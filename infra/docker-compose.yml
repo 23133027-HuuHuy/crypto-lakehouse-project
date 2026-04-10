@@ -1,104 +1,220 @@
-services:
-  # ==========================================
-  # LỚP 1: INGESTION - KAFKA KRAFT (KHÔNG CẦN ZOOKEEPER NỮA)
-  # ==========================================
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    container_name: lakehouse-kafka
-    ports:
-      - "9092:9092"   # Cho Spark gọi
-      - "29092:29092" # Cho Python ở ngoài gọi
-    environment:
-      # Bật chế độ KRaft (Thay thế hoàn toàn Zookeeper)
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093'
-      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:29092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@localhost:9093'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk' # Chuỗi Base64 ID bắt buộc của KRaft
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+version: "3.9"
 
-  # ==========================================
-  # LỚP 2: STORAGE (LƯU TRỮ GỐC)
-  # ==========================================
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: lakehouse-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx768m"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+    mem_limit: 1g
+    cpus: "0.80"
+    networks: [lakehouse-net]
+
   minio:
     image: minio/minio:latest
     container_name: lakehouse-minio
+    restart: unless-stopped
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      - MINIO_ROOT_USER=admin
-      - MINIO_ROOT_PASSWORD=password123
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
     command: server /data --console-address ":9001"
     volumes:
       - ./minio_data:/data
+    mem_limit: 768m
+    cpus: "0.50"
+    networks: [lakehouse-net]
 
-  # ==========================================
-  # LỚP 4: COMPUTE TỐI ƯU (SPARK LOCAL MODE TRONG DOCKER)
-  # ==========================================
-  # Bỏ đi cụm Master/Worker cồng kềnh (tốn >3GB RAM).
-  # Sử dụng một Container ảo gọn nhẹ chứa sẵn môi trường Java + PySpark cho Data Engineer.
-  spark-env:
+  stream-bronze:
     build:
       context: ..
       dockerfile: infra/Dockerfile.spark
-    container_name: lakehouse-spark-env
+    image: lakehouse-spark-env:latest
+    container_name: lakehouse-stream-bronze
+    restart: unless-stopped
     volumes:
       - ../:/app
     depends_on:
       - kafka
       - minio
-    # Trick để container sống chờ lệnh (idle), có thể 'docker-compose exec' vào bất cứ lúc nào
-    entrypoint: ["tail", "-f", "/dev/null"]
+    command: ["python", "/app/processing/pyspark_stream_to_bronze.py"]
+    mem_limit: 1536m
+    cpus: "1.00"
+    networks: [lakehouse-net]
 
-  # ==========================================
-  # LỚP 5: QUERY ENGINE - TRINO (CHO BI TOOLS)
-  # ==========================================
+  stream-silver:
+    image: lakehouse-spark-env:latest
+    container_name: lakehouse-stream-silver
+    restart: unless-stopped
+    volumes:
+      - ../:/app
+    depends_on:
+      - minio
+      - stream-bronze
+    command: ["python", "/app/processing/pyspark_bronze_to_silver.py"]
+    mem_limit: 1536m
+    cpus: "1.00"
+    networks: [lakehouse-net]
+
+  stream-gold:
+    image: lakehouse-spark-env:latest
+    container_name: lakehouse-stream-gold
+    restart: unless-stopped
+    volumes:
+      - ../:/app
+    depends_on:
+      - minio
+      - stream-silver
+    command: ["python", "/app/processing/pyspark_silver_to_gold.py"]
+    mem_limit: 1536m
+    cpus: "1.00"
+    networks: [lakehouse-net]
+
+  stream-producer:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.stream
+    image: lakehouse-stream-producer:latest
+    container_name: lakehouse-stream-producer
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: binance_trades
+      BINANCE_WS_URL: wss://stream.binance.com:9443/ws/btcusdt@aggTrade
+    volumes:
+      - ../:/app
+    depends_on:
+      - kafka
+    command: ["python", "/app/ingestion/stream_to_kafka.py"]
+    mem_limit: 256m
+    cpus: "0.30"
+    networks: [lakehouse-net]
+
+  prefect-server:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.prefect
+    image: lakehouse-prefect-run:latest
+    container_name: lakehouse-prefect-server
+    restart: unless-stopped
+    ports:
+      - "4200:4200"
+    environment:
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_API_URL: http://localhost:4200/api
+      PREFECT_UI_API_URL: http://localhost:4200/api
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    volumes:
+      - prefect-data:/root/.prefect
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4200/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 1g
+    cpus: "0.80"
+    networks: [lakehouse-net]
+
+  prefect-worker:
+    image: lakehouse-prefect-run:latest
+    container_name: lakehouse-prefect-worker
+    restart: unless-stopped
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../:/app
+    working_dir: /app
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        prefect work-pool create docker-pool --type docker >/dev/null 2>&1 || true
+        prefect worker start --pool docker-pool --type docker
+    mem_limit: 512m
+    cpus: "0.50"
+    networks: [lakehouse-net]
+
+  # optional lightweight consumers
+  gold-api:
+    image: lakehouse-spark-env:latest
+    container_name: lakehouse-gold-api
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - "5000:5000"
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: password123
+      API_PORT: 5000
+      FLASK_DEBUG: "false"
+    volumes:
+      - ../:/app
+    depends_on:
+      - minio
+    command: ["python", "/app/api/gold_api.py"]
+    mem_limit: 1g
+    cpus: "0.80"
+    networks: [lakehouse-net]
+
   trino:
-    image: trinodb/trino:latest
+    image: trinodb/trino:443
     container_name: lakehouse-trino
+    restart: unless-stopped
+    profiles: ["full"]
     ports:
       - "8080:8080"
     volumes:
       - ./trino/catalog:/etc/trino/catalog
     depends_on:
       - minio
+    mem_limit: 1g
+    cpus: "0.70"
+    networks: [lakehouse-net]
 
-  # ==========================================
-  # LỚP 6: VISUALIZATION - METABASE
-  # ==========================================
   metabase:
     image: metabase/metabase:latest
     container_name: lakehouse-metabase
+    restart: unless-stopped
+    profiles: ["full"]
     ports:
       - "3000:3000"
     environment:
-      - MB_DB_TYPE=h2
+      MB_DB_TYPE: h2
     depends_on:
       - trino
+    mem_limit: 1g
+    cpus: "0.70"
+    networks: [lakehouse-net]
 
-  # ==========================================
-  # LỚP 7: REST API - GOLD LAYER API
-  # ==========================================
-  gold-api:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.spark
-    container_name: lakehouse-gold-api
-    ports:
-      - "5000:5000"
-    environment:
-      - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ACCESS_KEY=admin
-      - MINIO_SECRET_KEY=password123
-      - API_PORT=5000
-      - FLASK_DEBUG=false
-    volumes:
-      - ../:/app
-    depends_on:
-      - minio
-    command: ["python", "/app/api/gold_api.py"]
+volumes:
+  prefect-data:
+
+networks:
+  lakehouse-net:
+    name: lakehouse-net

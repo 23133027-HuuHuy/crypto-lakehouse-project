@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir \
     findspark \
     flask>=2.3.0 \
     flask-cors>=4.0.0 \
-    pandas>=2.0.0
+    pandas>=2.0.0 \
+    prefect==2.20.25 \
+    prefect-docker==0.5.5 \
+    docker==7.1.0
 
 WORKDIR /app

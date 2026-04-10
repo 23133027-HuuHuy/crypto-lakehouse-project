@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StringType
+from minio import Minio
 
 # 1. Khởi tạo Spark (Dùng cấu hình Spark 4.1.1 và Scala 2.13 như file Batch)
 spark = (SparkSession.builder
@@ -39,8 +40,22 @@ df_stream = df_kafka.selectExpr("CAST(value AS STRING)")
 
 # 3. Ghi luồng vào lớp BRONZE (Nạp chồng vào cùng folder với dữ liệu Batch)
 # Đây chính là điểm "Unified" của đồ án!
-bronze_path = "s3a://lakehouse/bronze/batch_data"
+bronze_path = "s3a://lakehouse/bronze/all_crypto_trades"
 checkpoint_path = "s3a://lakehouse/checkpoints/stream_to_bronze"
+
+# Đảm bảo bucket tồn tại trước khi thao tác checkpoint/Delta
+minio_client = Minio("minio:9000", access_key="admin", secret_key="password123", secure=False)
+if not minio_client.bucket_exists("lakehouse"):
+    minio_client.make_bucket("lakehouse")
+
+# Tạo sẵn checkpoint dir để tránh lỗi FileNotFound khi tạo commit đầu tiên
+hadoop_conf = spark._jsc.hadoopConfiguration()
+fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(
+    spark._jvm.java.net.URI(checkpoint_path), hadoop_conf
+)
+checkpoint_obj = spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path)
+if not fs.exists(checkpoint_obj):
+    fs.mkdirs(checkpoint_obj)
 
 query = (df_stream.writeStream
     .format("delta")

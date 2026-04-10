@@ -38,7 +38,7 @@ json_schema = StructType([
 ])
 
 # 3. Đọc luồng dữ liệu từ lớp BRONZE
-bronze_path = "s3a://lakehouse/bronze/batch_data"
+bronze_path = "s3a://lakehouse/bronze/all_crypto_trades"
 # Đọc dưới dạng Stream để bắt dữ liệu liên tục chảy từ Bronze
 df_bronze = spark.readStream.format("delta").load(bronze_path)
 

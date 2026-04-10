@@ -1,41 +1,40 @@
 import os
+from pathlib import Path
+
 from minio import Minio
 
-# --- CẤU HÌNH KẾT NỐI ---
-client = Minio(
-    "localhost:9000",
-    access_key="admin",     
-    secret_key="password123", 
-    secure=False
-)
 
-bucket_name = "lakehouse"
+def _get_minio_client() -> Minio:
+    endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+    access_key = os.getenv("MINIO_ACCESS_KEY", "admin")
+    secret_key = os.getenv("MINIO_SECRET_KEY", "password123")
+    secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    return Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
 
-# CHỈNH LẠI: Trỏ đến thư mục chứa các file, không trỏ đến 1 file duy nhất
-local_data_path = "/home/thachhuynh/BA/crypto-lakehouse-project/infra/workspace"
-# --- THỰC HIỆN ---
 
-# 1. Kiểm tra và tạo Bucket
-if not client.bucket_exists(bucket_name):
-    client.make_bucket(bucket_name)
-    print(f"Đã tạo bucket: {bucket_name}")
+def main() -> None:
+    client = _get_minio_client()
+    bucket_name = os.getenv("MINIO_BUCKET", "lakehouse")
+    local_data_path = os.getenv("BATCH_DATA_DIR", "/app/infra/workspace")
 
-# 2. Duyệt qua thư mục để upload
-print("Đang bắt đầu nạp dữ liệu thô (Raw Data) vào MinIO...")
+    if not client.bucket_exists(bucket_name):
+        client.make_bucket(bucket_name)
+        print(f"Đã tạo bucket: {bucket_name}")
 
-if os.path.isdir(local_data_path):
-    for file_name in os.listdir(local_data_path):
-        # Chỉ lấy các file CSV
-        if file_name.endswith(".csv"):
-            file_path = os.path.join(local_data_path, file_name)
-            
-           
-            minio_path = f"raw_data/batch/{file_name}"
-            
-            # 3. Thực hiện Upload
-            client.fput_object(bucket_name, minio_path, file_path)
-            print(f"Đã nạp thành công file {file_name} vào lớp Raw!")
-else:
-    print(f"Lỗi: Đường dẫn {local_data_path} không phải là một thư mục hợp lệ!")
+    base_path = Path(local_data_path)
+    if not base_path.is_dir():
+        raise FileNotFoundError(f"Đường dẫn không hợp lệ: {local_data_path}")
 
-print("NHIỆM VỤ HOÀN THÀNH: File CSV đã nằm ở lớp Raw trên MinIO, sẵn sàng cho Spark xử lý!")
+    print("Đang nạp dữ liệu batch vào MinIO...")
+    uploaded_files = 0
+    for file_path in sorted(base_path.glob("*.csv")):
+        minio_path = f"raw_data/batch/{file_path.name}"
+        client.fput_object(bucket_name, minio_path, str(file_path))
+        uploaded_files += 1
+        print(f"Uploaded: {file_path.name}")
+
+    print(f"Hoàn tất upload {uploaded_files} file.")
+
+
+if __name__ == "__main__":
+    main()

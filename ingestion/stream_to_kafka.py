@@ -1,16 +1,15 @@
-import websocket
 import json
+import os
+
+import websocket
 from confluent_kafka import Producer
 
-# --- CẤU HÌNH KAFKA ---
-# Sử dụng port 29092 vì script này chạy bên ngoài Docker (External)
-conf = {'bootstrap.servers': '127.0.0.1:29092'}
-producer = Producer(conf)
-
-TOPIC_NAME = 'binance_trades'
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:29092")
+TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance_trades")
+BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@aggTrade")
+producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
 
 def on_message(ws, message):
-    # 1. Nhận dữ liệu JSON từ Binance
     data = json.loads(message)
     normalized_data = {
         "s": data.get("s"),
@@ -20,11 +19,9 @@ def on_message(ws, message):
         "m": data.get("m")
     }
     
-    # 2. Đẩy dữ liệu vào Kafka topic
     producer.produce(TOPIC_NAME, value=json.dumps(normalized_data))
-    producer.flush() # Đẩy dữ liệu đi ngay lập tức
-    
-    # 3. In ra màn hình để Demo "Velocity" cho cô giáo xem
+    producer.flush()
+
     print(
         f"Real-time: Price {normalized_data['p']} | "
         f"Qty {normalized_data['q']} | "
@@ -38,15 +35,15 @@ def on_error(ws, error):
 def on_close(ws, close_status_code, close_msg):
     print(" Đã ngắt kết nối với Binance")
 
-# --- KẾT NỐI BINANCE WEBSOCKET ---
-socket_url = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
-
 ws = websocket.WebSocketApp(
-    socket_url,
+    BINANCE_WS_URL,
     on_message=on_message,
     on_error=on_error,
     on_close=on_close
 )
 
-print(f"Đang hứng luồng dữ liệu Bitcoin và đẩy vào Kafka topic: {TOPIC_NAME}...")
+print(
+    f"Đang stream Binance -> Kafka. topic={TOPIC_NAME}, "
+    f"bootstrap={KAFKA_BOOTSTRAP_SERVERS}"
+)
 ws.run_forever()
