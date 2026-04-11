@@ -5,14 +5,23 @@ from minio import Minio
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
 
+# ================================================================
+# SPARK BATCH: CSV → Bronze (Delta Lake trên MinIO)
+# ================================================================
+
 print("1. Đang khởi tạo Spark Session và tải các thư viện kết nối MinIO, Delta Lake...")
 print("   (Lưu ý: Lần chạy đầu tiên sẽ mất 1-3 phút để tải file .jar, vui lòng đợi!)")
+
+SPARK_PACKAGES = (
+    "io.delta:delta-spark_2.13:4.1.0,"
+    "org.apache.hadoop:hadoop-aws:3.4.2,"
+    "software.amazon.awssdk:bundle:2.29.52"
+)
 
 # Khởi tạo Spark với cấu hình thư viện (.jar) để nói chuyện với S3 (MinIO) và Delta
 spark = (SparkSession.builder
     .appName("Lakehouse_Batch_Raw_To_Bronze")
-    # Cập nhật Delta 4.1.0 và Scala 2.13 cho khớp với PySpark 4.1.1
-    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
+    .config("spark.jars.packages", SPARK_PACKAGES)
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
@@ -38,7 +47,7 @@ bronze_schema = StructType([
 ])
 
 # Batch đọc trực tiếp từ local mount (không qua lớp Raw trên MinIO)
-primary_batch_dir = os.getenv("BATCH_DATA_DIR", "/app/workspace")
+primary_batch_dir = os.getenv("BATCH_DATA_DIR", "/app/infra/workspace")
 fallback_batch_dir = "/app/infra/workspace"
 batch_data_dir = primary_batch_dir if os.path.isdir(primary_batch_dir) else fallback_batch_dir
 if not os.path.isdir(batch_data_dir):

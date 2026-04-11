@@ -6,13 +6,13 @@ ENV PYTHONUNBUFFERED=1
 
 # Cài đặt Java 17 (Bắt buộc cho Spark) và công cụ
 RUN apt-get update && \
-    apt-get install -y default-jre procps wget && \
+    apt-get install -y --no-install-recommends default-jre procps curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Thiết lập biến Java
 ENV JAVA_HOME="/usr/lib/jvm/default-java"
 
-# Cài đặt PySpark và các công cụ Python của Ingestion
+# Cài đặt PySpark và các công cụ Python
 RUN pip install --no-cache-dir \
     pyspark==4.1.1 \
     minio==7.2.5 \
@@ -23,7 +23,22 @@ RUN pip install --no-cache-dir \
     flask-cors>=4.0.0 \
     pandas>=2.0.0 \
     prefect==2.20.25 \
-    prefect-docker==0.5.5 \
     docker==7.1.0
 
 WORKDIR /app
+
+# Pre-download tất cả Maven JARs khi build image
+# để container không cần tải lại khi khởi động (tiết kiệm 3-5 phút mỗi lần start)
+RUN python -c "\
+from pyspark.sql import SparkSession; \
+spark = SparkSession.builder \
+    .config('spark.jars.packages', \
+        'org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.1,' \
+        'io.delta:delta-spark_2.13:4.1.0,' \
+        'org.apache.hadoop:hadoop-aws:3.4.2,' \
+        'software.amazon.awssdk:bundle:2.29.52') \
+    .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension') \
+    .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog') \
+    .getOrCreate(); \
+spark.stop(); \
+print('==> All Maven JARs pre-downloaded successfully')"

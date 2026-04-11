@@ -4,7 +4,7 @@ from pyspark.sql.functions import col
 # 1. Khởi tạo Spark với cấu hình MinIO và Delta
 spark = (SparkSession.builder
     .appName("Check_Silver_Data")
-    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
+    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.29.52")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")

@@ -1,11 +1,51 @@
+import time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
-print("1. Dang khoi tao Spark Session cho pipeline Silver -> Gold...")
+# ================================================================
+# SPARK STREAMING: Silver → Gold (Tổng hợp analytics)
+# ================================================================
 
+SPARK_PACKAGES = (
+    "io.delta:delta-spark_2.13:4.1.0,"
+    "org.apache.hadoop:hadoop-aws:3.4.2,"
+    "software.amazon.awssdk:bundle:2.29.52"
+)
+
+silver_path = "s3a://lakehouse/silver/btc_trades"
+gold_ohlc_path = "s3a://lakehouse/gold/OHLC_1Min"
+gold_whale_path = "s3a://lakehouse/gold/Whale_Alert"
+gold_maker_taker_path = "s3a://lakehouse/gold/maker_taker_flow_1min"
+gold_vwap_path = "s3a://lakehouse/gold/VWAP_1Min"
+checkpoint_ohlc = "s3a://lakehouse/checkpoints/silver_to_gold_ohlc_1min"
+checkpoint_whale = "s3a://lakehouse/checkpoints/silver_to_gold_whale_alert"
+checkpoint_maker_taker = "s3a://lakehouse/checkpoints/silver_to_gold_maker_taker_flow_1min"
+checkpoint_vwap = "s3a://lakehouse/checkpoints/silver_to_gold_vwap_1min"
+whale_threshold_usdt = 50000.0
+
+
+def wait_for_silver_table(spark_session, path, max_retries=90, delay=10):
+    """Đợi Silver Delta table tồn tại trước khi đọc stream"""
+    for attempt in range(1, max_retries + 1):
+        try:
+            hadoop_conf = spark_session._jsc.hadoopConfiguration()
+            fs = spark_session._jvm.org.apache.hadoop.fs.FileSystem.get(
+                spark_session._jvm.java.net.URI(path), hadoop_conf)
+            delta_log = spark_session._jvm.org.apache.hadoop.fs.Path(path + "/_delta_log")
+            if fs.exists(delta_log):
+                print(f"✅ Silver Delta table đã sẵn sàng tại: {path}")
+                return True
+        except Exception as e:
+            print(f"⏳ [{attempt}/{max_retries}] Đợi Silver table... ({e})")
+        time.sleep(delay)
+    raise FileNotFoundError(f"Silver Delta table không tồn tại sau {max_retries * delay}s: {path}")
+
+
+# 1. Khởi tạo Spark
+print("1. Dang khoi tao Spark Session cho pipeline Silver -> Gold...")
 spark = (SparkSession.builder
     .appName("Lakehouse_Silver_To_Gold")
-    .config("spark.jars.packages", "io.delta:delta-spark_2.13:4.1.0,org.apache.hadoop:hadoop-aws:3.4.2,software.amazon.awssdk:bundle:2.23.19")
+    .config("spark.jars.packages", SPARK_PACKAGES)
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     .config("spark.sql.parquet.enableVectorizedReader", "false")
@@ -21,31 +61,8 @@ spark = (SparkSession.builder
 
 spark.sparkContext.setLogLevel("WARN")
 
-silver_path = "s3a://lakehouse/silver/btc_trades"
-gold_ohlc_path = "s3a://lakehouse/gold/OHLC_1Min"
-gold_whale_path = "s3a://lakehouse/gold/Whale_Alert"
-gold_maker_taker_path = "s3a://lakehouse/gold/maker_taker_flow_1min"
-gold_vwap_path = "s3a://lakehouse/gold/VWAP_1Min"
-checkpoint_ohlc = "s3a://lakehouse/checkpoints/silver_to_gold_ohlc_1min"
-checkpoint_whale = "s3a://lakehouse/checkpoints/silver_to_gold_whale_alert"
-checkpoint_maker_taker = "s3a://lakehouse/checkpoints/silver_to_gold_maker_taker_flow_1min"
-checkpoint_vwap = "s3a://lakehouse/checkpoints/silver_to_gold_vwap_1min"
-whale_threshold_usdt = 50000.0
-
-
-def path_exists(path_str):
-    hadoop_conf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(
-        spark._jvm.java.net.URI(path_str), hadoop_conf)
-    path_obj = spark._jvm.org.apache.hadoop.fs.Path(path_str)
-    return fs.exists(path_obj)
-
-
-if not path_exists(silver_path):
-    print(f"Khong tim thay du lieu Silver tai: {silver_path}")
-    print("Vui long chay pipeline Bronze -> Silver truoc, hoac kiem tra lai duong dan Delta tren MinIO.")
-    spark.stop()
-    raise SystemExit(0)
+# 2. Đợi Silver table tồn tại
+wait_for_silver_table(spark, silver_path)
 
 print(f"2. Dang doc du lieu streaming tu lop Silver: {silver_path}")
 
@@ -74,6 +91,9 @@ def load_silver_snapshot():
         ))
 
 
+# ============================================================
+# GOLD TABLE 1: OHLC_1Min (Nến giá 1 phút)
+# ============================================================
 def rebuild_ohlc_1min(_, batch_id):
     print(f"\n[Batch {batch_id}] Dang tinh lai bang OHLC_1Min tu toan bo lop Silver...")
 
@@ -101,6 +121,28 @@ def rebuild_ohlc_1min(_, batch_id):
         .save(gold_ohlc_path))
 
 
+# ============================================================
+# GOLD TABLE 2: Whale_Alert (Cảnh báo giao dịch lớn)
+# ============================================================
+def rebuild_whale_alert(micro_batch_df, batch_id):
+    """Dùng foreachBatch để xử lý Whale Alert đúng cách"""
+    print(f"\n[Batch {batch_id}] Dang quet Whale Alert tu micro-batch...")
+
+    whale_df = micro_batch_df.filter(col("quote_qty") > whale_threshold_usdt)
+
+    if whale_df.count() > 0:
+        (whale_df
+            .withColumn("trade_value_usdt", col("quote_qty").cast("double"))
+            .write
+            .format("delta")
+            .mode("append")
+            .save(gold_whale_path))
+        print(f"  -> Them {whale_df.count()} Whale Alert moi")
+
+
+# ============================================================
+# GOLD TABLE 3: Maker/Taker Flow (Dòng tiền mua/bán)
+# ============================================================
 def rebuild_maker_taker_flow(_, batch_id):
     print(f"\n[Batch {batch_id}] Dang tinh lai bang maker_taker_flow_1min...")
 
@@ -128,6 +170,9 @@ def rebuild_maker_taker_flow(_, batch_id):
         .save(gold_maker_taker_path))
 
 
+# ============================================================
+# GOLD TABLE 4: VWAP_1Min (Volume-Weighted Average Price)
+# ============================================================
 def rebuild_vwap_1min(_, batch_id):
     print(f"\n[Batch {batch_id}] Dang tinh lai bang VWAP_1Min...")
 
@@ -155,6 +200,11 @@ def rebuild_vwap_1min(_, batch_id):
         .mode("overwrite")
         .save(gold_vwap_path))
 
+
+# ============================================================
+# START ALL STREAMING QUERIES
+# ============================================================
+
 print("3. Dang tao bang Gold OHLC_1Min bang PySpark SQL...")
 query_ohlc = (df_silver.writeStream
     .foreachBatch(rebuild_ohlc_1min)
@@ -163,27 +213,11 @@ query_ohlc = (df_silver.writeStream
     .start())
 
 print("4. Dang tao bang Gold Whale_Alert bang PySpark SQL...")
-
-df_silver.createOrReplaceTempView("silver_trades_stream")
-
-df_whale_alert = spark.sql(f"""
-    SELECT
-        symbol,
-        event_time,
-        price,
-        quantity,
-        quote_qty,
-        is_buyer_maker,
-        CAST(quote_qty AS DOUBLE) AS trade_value_usdt
-    FROM silver_trades_stream
-    WHERE quote_qty > {whale_threshold_usdt}
-""")
-
-query_whale = (df_whale_alert.writeStream
-    .format("delta")
+query_whale = (df_silver.writeStream
+    .foreachBatch(rebuild_whale_alert)
     .outputMode("append")
     .option("checkpointLocation", checkpoint_whale)
-    .start(gold_whale_path))
+    .start())
 
 print("5. Dang tao bang Gold maker_taker_flow_1min bang PySpark SQL...")
 query_maker_taker = (df_silver.writeStream
