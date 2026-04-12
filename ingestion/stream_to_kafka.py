@@ -44,6 +44,7 @@ producer = Producer({
 def on_message(ws, message):
     data = json.loads(message)
     normalized_data = {
+        "a": data.get("a"),
         "s": data.get("s"),
         "p": data.get("p"),
         "q": data.get("q"),

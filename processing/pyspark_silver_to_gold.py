@@ -101,6 +101,7 @@ df_silver = (spark.readStream
     .format("delta")
     .load(silver_path)
     .filter(
+        col("event_id").isNotNull() &
         col("symbol").isNotNull() &
         col("price").isNotNull() &
         col("quantity").isNotNull() &
@@ -185,16 +186,37 @@ def append_whale_alert(micro_batch_df, batch_id):
 
     whale_df = (micro_batch_df
         .filter(col("quote_qty") > whale_threshold_usdt)
-        .withColumn("trade_value_usdt", col("quote_qty").cast("double")))
+        .withColumn("trade_value_usdt", col("quote_qty").cast("double"))
+        .select(
+            col("event_id"),
+            col("symbol"),
+            col("event_time"),
+            col("price"),
+            col("quantity"),
+            col("quote_qty"),
+            col("is_buyer_maker"),
+            col("trade_value_usdt"),
+        ))
 
     if whale_df.rdd.isEmpty():
         return
 
-    (whale_df.write
-        .format("delta")
-        .mode("append")
-        .save(gold_whale_path))
-    print("  -> Da append Whale Alert moi")
+    merge_into_delta(
+        spark_session=spark,
+        source_df=whale_df.dropDuplicates(["event_id"]),
+        target_path=gold_whale_path,
+        merge_condition="target.event_id = source.event_id",
+        set_map={
+            "symbol": "target.symbol",
+            "event_time": "target.event_time",
+            "price": "target.price",
+            "quantity": "target.quantity",
+            "quote_qty": "target.quote_qty",
+            "is_buyer_maker": "target.is_buyer_maker",
+            "trade_value_usdt": "target.trade_value_usdt",
+        }
+    )
+    print("  -> Da upsert Whale Alert theo event_id")
 
 
 # ============================================================

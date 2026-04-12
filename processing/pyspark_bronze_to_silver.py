@@ -1,10 +1,12 @@
 import time
+
+from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import coalesce, col, from_json, from_unixtime, lit, lower, to_timestamp, when
+from pyspark.sql.functions import coalesce, col, concat_ws, from_json, from_unixtime, lit, lower, sha2, to_timestamp, when
 from pyspark.sql.types import BooleanType, DoubleType, LongType, StringType, StructField, StructType
 
 # ================================================================
-# SPARK STREAMING: Bronze → Silver (Làm sạch & chuẩn hóa)
+# SPARK STREAMING: Bronze -> Silver (Lam sach, chuan hoa, dedupe)
 # ================================================================
 
 SPARK_PACKAGES = (
@@ -19,7 +21,7 @@ checkpoint_silver = "s3a://lakehouse/checkpoints/bronze_to_silver"
 
 
 def wait_for_bronze_table(spark_session, path, max_retries=60, delay=10):
-    """Đợi Bronze Delta table tồn tại trước khi đọc stream"""
+    """Doi Bronze Delta table ton tai truoc khi doc stream."""
     for attempt in range(1, max_retries + 1):
         try:
             hadoop_conf = spark_session._jsc.hadoopConfiguration()
@@ -27,16 +29,22 @@ def wait_for_bronze_table(spark_session, path, max_retries=60, delay=10):
                 spark_session._jvm.java.net.URI(path), hadoop_conf)
             delta_log = spark_session._jvm.org.apache.hadoop.fs.Path(path + "/_delta_log")
             if fs.exists(delta_log):
-                print(f"✅ Bronze Delta table đã sẵn sàng tại: {path}")
+                print(f"Bronze Delta table da san sang tai: {path}")
                 return True
-        except Exception as e:
-            print(f"⏳ [{attempt}/{max_retries}] Đợi Bronze table... ({e})")
+        except Exception as exc:
+            print(f"[{attempt}/{max_retries}] Dang doi Bronze table... ({exc})")
         time.sleep(delay)
-    raise FileNotFoundError(f"Bronze Delta table không tồn tại sau {max_retries * delay}s: {path}")
+    raise FileNotFoundError(f"Bronze Delta table khong ton tai sau {max_retries * delay}s: {path}")
 
 
-# 1. Khởi tạo Spark
-print("🔧 Đang khởi tạo Spark Session cho pipeline Bronze → Silver...")
+def is_delta_table(spark_session, path):
+    try:
+        return DeltaTable.isDeltaTable(spark_session, path)
+    except Exception:
+        return False
+
+
+print("Dang khoi tao Spark Session cho pipeline Bronze -> Silver...")
 spark = (SparkSession.builder
     .appName("Lakehouse_Bronze_To_Silver")
     .config("spark.jars.packages", SPARK_PACKAGES)
@@ -55,33 +63,30 @@ spark = (SparkSession.builder
 
 spark.sparkContext.setLogLevel("WARN")
 
-# 2. Đợi Bronze table tồn tại (stream-bronze cần ghi ít nhất 1 micro-batch trước)
 wait_for_bronze_table(spark, bronze_path)
 
-# 3. Định nghĩa Schema chuẩn của Binance để bóc tách JSON
 json_schema = StructType([
-    StructField("p", StringType(), True),  # Price
-    StructField("q", StringType(), True),  # Quantity
-    StructField("T", LongType(), True),    # Event time
-    StructField("s", StringType(), True),  # Symbol (BTCUSDT)
-    StructField("m", BooleanType(), True)  # is buyer maker
+    StructField("a", LongType(), True),
+    StructField("p", StringType(), True),
+    StructField("q", StringType(), True),
+    StructField("T", LongType(), True),
+    StructField("s", StringType(), True),
+    StructField("m", BooleanType(), True)
 ])
 
-# 4. Đọc luồng dữ liệu từ lớp BRONZE
 df_bronze = spark.readStream.format("delta").load(bronze_path)
 
-# KHẮC PHỤC LỖI SCHEMA: Đảm bảo các cột luôn tồn tại dù chỉ có Stream hoặc chỉ có Batch
 if "value" not in df_bronze.columns:
     df_bronze = df_bronze.withColumn("value", lit(None).cast("string"))
-# Thêm cột Batch nếu chưa có (trường hợp Bronze chỉ có dữ liệu Stream)
-for batch_col in ["Price", "Quantity", "Quote_Qty", "Timestamp", "is_Buyer_Maker"]:
+
+for batch_col in ["Trade_ID", "Price", "Quantity", "Quote_Qty", "Timestamp", "is_Buyer_Maker"]:
     if batch_col not in df_bronze.columns:
         df_bronze = df_bronze.withColumn(batch_col, lit(None).cast("string"))
 
-# 5. Xử lý làm sạch đa luồng (Handling both Batch & Stream struct)
+
 df_silver = (df_bronze
-    # Kiểm tra: nếu có cột 'value' (từ Stream) thì parse JSON, còn không thì None
     .withColumn("stream_data", when(col("value").isNotNull(), from_json(col("value"), json_schema)).otherwise(None))
+    .withColumn("symbol", coalesce(col("stream_data.s"), lit("BTCUSDT")))
     .withColumn("price", coalesce(col("stream_data.p"), col("Price")).cast(DoubleType()))
     .withColumn("quantity", coalesce(col("stream_data.q"), col("Quantity")).cast(DoubleType()))
     .withColumn(
@@ -94,9 +99,7 @@ df_silver = (df_bronze
     .withColumn(
         "event_time",
         coalesce(
-            # Stream data: timestamp T là MILLISECONDS -> chia 1000
             to_timestamp(from_unixtime(col("stream_data.T").cast(DoubleType()) / 1000.0)),
-            # Batch data: timestamp là MICROSECONDS -> chia 1000000
             to_timestamp(from_unixtime(col("Timestamp").cast(DoubleType()) / 1000000.0))
         )
     )
@@ -108,8 +111,31 @@ df_silver = (df_bronze
         .otherwise(None)
         .cast(BooleanType())
     )
+    .withColumn(
+        "event_id",
+        coalesce(
+            when(
+                col("stream_data.a").isNotNull(),
+                concat_ws(":", lit("stream"), col("symbol"), col("stream_data.a").cast("string"))
+            ),
+            when(col("Trade_ID").isNotNull(), concat_ws(":", lit("batch"), col("Trade_ID"))),
+            sha2(
+                concat_ws(
+                    "||",
+                    col("symbol"),
+                    col("event_time").cast("string"),
+                    col("price").cast("string"),
+                    col("quantity").cast("string"),
+                    col("quote_qty").cast("string"),
+                    col("is_buyer_maker").cast("string"),
+                ),
+                256
+            )
+        )
+    )
     .select(
-        coalesce(col("stream_data.s"), lit("BTCUSDT")).alias("symbol"),
+        col("event_id"),
+        col("symbol"),
         col("price"),
         col("quantity"),
         col("quote_qty"),
@@ -117,20 +143,45 @@ df_silver = (df_bronze
         col("is_buyer_maker")
     )
     .filter(
+        col("event_id").isNotNull() &
         col("price").isNotNull() &
         (col("price") > 0) &
         col("quantity").isNotNull() &
-        (col("quantity") > 0)
-    )  # Loại bỏ dữ liệu rác/lỗi
-)
+        (col("quantity") > 0) &
+        col("event_time").isNotNull()
+    ))
 
-# 6. Ghi xuống lớp SILVER
+
+def upsert_silver(micro_batch_df, batch_id):
+    print(f"\n[Batch {batch_id}] Dang upsert idempotent vao Silver...")
+
+    if micro_batch_df.rdd.isEmpty():
+        return
+
+    source_df = micro_batch_df.dropDuplicates(["event_id"])
+
+    if not is_delta_table(spark, silver_path):
+        (source_df.write
+            .format("delta")
+            .mode("append")
+            .save(silver_path))
+        return
+
+    delta_table = DeltaTable.forPath(spark, silver_path)
+    (delta_table.alias("target")
+        .merge(
+            source_df.alias("source"),
+            "target.event_id = source.event_id"
+        )
+        .whenNotMatchedInsertAll()
+        .execute())
+
+
 query = (df_silver.writeStream
-    .format("delta")
+    .foreachBatch(upsert_silver)
     .outputMode("append")
     .option("checkpointLocation", checkpoint_silver)
-    .option("mergeSchema", "true")
-    .start(silver_path))
+    .start())
 
-print(f"✨ Lớp Silver đang được tinh chế tại: {silver_path}")
+print(f"Lop Silver dang duoc tinh che va dedupe tai: {silver_path}")
 query.awaitTermination()
