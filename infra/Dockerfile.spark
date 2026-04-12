@@ -15,6 +15,7 @@ ENV JAVA_HOME="/usr/lib/jvm/default-java"
 # Cài đặt PySpark và các công cụ Python
 RUN pip install --no-cache-dir \
     pyspark==4.1.1 \
+    delta-spark==4.1.0 \
     minio==7.2.5 \
     websocket-client==1.7.0 \
     confluent-kafka==2.3.0 \

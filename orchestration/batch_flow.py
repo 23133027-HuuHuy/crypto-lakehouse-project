@@ -11,7 +11,7 @@ PROJECT_ROOT = Path("/app")
 
 
 def _run(cmd: List[str], cwd: Path = PROJECT_ROOT) -> None:
-    """Chạy command và stream output real-time"""
+    """Run a command and stream its output to Prefect logs."""
     logger = get_run_logger()
     logger.info(f"Executing: {' '.join(cmd)} in {cwd}")
 
@@ -19,65 +19,51 @@ def _run(cmd: List[str], cwd: Path = PROJECT_ROOT) -> None:
         cmd,
         cwd=str(cwd),
         capture_output=True,
-        text=True
+        text=True,
     )
 
-    # Log stdout
     if result.stdout:
         for line in result.stdout.strip().split("\n"):
             logger.info(line)
 
-    # Log stderr (Spark logs go to stderr)
     if result.stderr:
-        for line in result.stderr.strip().split("\n")[-20:]:  # Last 20 lines only
+        for line in result.stderr.strip().split("\n")[-20:]:
             logger.warning(line)
 
     if result.returncode != 0:
         raise subprocess.CalledProcessError(
-            result.returncode, cmd,
+            result.returncode,
+            cmd,
             output=result.stdout,
-            stderr=result.stderr
+            stderr=result.stderr,
         )
 
 
 @task(name="batch_to_bronze", retries=2, retry_delay_seconds=60)
 def batch_to_bronze() -> None:
-    """Đọc CSV từ workspace và ghi vào Bronze (Delta Lake trên MinIO)"""
+    """Read CSV files from workspace and write them into Bronze."""
     logger = get_run_logger()
 
-    # Kiểm tra CSV files trước khi chạy Spark
     data_dir = os.getenv("BATCH_DATA_DIR", "/app/infra/workspace")
     csv_files = [f for f in os.listdir(data_dir) if f.endswith(".csv")] if os.path.isdir(data_dir) else []
 
     if not csv_files:
-        logger.warning(f"⚠️ Không tìm thấy file CSV trong {data_dir}. Bỏ qua batch ingest.")
+        logger.warning(f"Khong tim thay file CSV trong {data_dir}. Bo qua batch ingest.")
         return
 
-    logger.info(f"📂 Tìm thấy {len(csv_files)} file CSV: {csv_files}")
+    logger.info(f"Tim thay {len(csv_files)} file CSV: {csv_files}")
     _run([sys.executable, "processing/spark_batch_to_bronze.py"])
-    logger.info("✅ Batch → Bronze hoàn tất!")
-
-
-@task(name="rebuild_silver_gold", retries=2, retry_delay_seconds=60)
-def rebuild_silver_gold() -> None:
-    """Rebuild lại Silver + Gold layers từ Bronze data"""
-    _run([sys.executable, "processing/rebuild_silver_gold.py"])
+    logger.info("Batch -> Bronze hoan tat.")
 
 
 @flow(name="lakehouse-batch-flow", retries=1, retry_delay_seconds=120)
 def run_batch_pipeline() -> None:
     logger = get_run_logger()
-    logger.info("🚀 Start batch pipeline")
+    logger.info("Start batch pipeline")
 
     batch_to_bronze()
 
-    run_full_rebuild = os.getenv("RUN_FULL_REBUILD", "false").lower() == "true"
-    if run_full_rebuild:
-        rebuild_silver_gold()
-    else:
-        logger.info("ℹ️ Skip full rebuild (set RUN_FULL_REBUILD=true to enable)")
-
-    logger.info("✅ Batch pipeline done")
+    logger.info("Batch pipeline done")
 
 
 if __name__ == "__main__":
