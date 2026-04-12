@@ -3,6 +3,8 @@ FROM python:3.10-slim
 # Ngăn python tạo file bytecode dư thừa
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV SPARK_LOCAL_HOSTNAME=localhost
+ENV SPARK_LOCAL_IP=127.0.0.1
 
 # Cài đặt Java 17 (Bắt buộc cho Spark) và công cụ
 RUN apt-get update && \
