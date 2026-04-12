@@ -2,7 +2,7 @@ import time
 
 from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, count, expr, max, min, sum, when, window
 
 # ================================================================
 # SPARK STREAMING: Silver -> Gold (Tong hop analytics)
@@ -115,24 +115,35 @@ df_silver = (spark.readStream
 def upsert_ohlc_1min(micro_batch_df, batch_id):
     print(f"\n[Batch {batch_id}] Dang upsert incremental bang OHLC_1Min...")
 
-    micro_batch_df.createOrReplaceTempView("silver_trades_batch")
-
-    df_ohlc_batch = spark.sql("""
-        SELECT
-            symbol,
-            window(event_time, '1 minute').start AS candle_time,
-            min_by(price, event_time) AS open_price,
-            min(event_time) AS open_event_time,
-            max(price) AS high_price,
-            min(price) AS low_price,
-            max_by(price, event_time) AS close_price,
-            max(event_time) AS close_event_time,
-            sum(quantity) AS total_quantity,
-            sum(quote_qty) AS total_quote_qty,
-            count(*) AS total_trades
-        FROM silver_trades_batch
-        GROUP BY symbol, window(event_time, '1 minute')
-    """)
+    df_ohlc_batch = (micro_batch_df
+        .groupBy(
+            col("symbol"),
+            window(col("event_time"), "1 minute").alias("time_window")
+        )
+        .agg(
+            expr("min_by(price, event_time)").alias("open_price"),
+            min("event_time").alias("open_event_time"),
+            max("price").alias("high_price"),
+            min("price").alias("low_price"),
+            expr("max_by(price, event_time)").alias("close_price"),
+            max("event_time").alias("close_event_time"),
+            sum("quantity").alias("total_quantity"),
+            sum("quote_qty").alias("total_quote_qty"),
+            count("*").alias("total_trades"),
+        )
+        .select(
+            col("symbol"),
+            col("time_window.start").alias("candle_time"),
+            col("open_price"),
+            col("open_event_time"),
+            col("high_price"),
+            col("low_price"),
+            col("close_price"),
+            col("close_event_time"),
+            col("total_quantity"),
+            col("total_quote_qty"),
+            col("total_trades"),
+        ))
 
     merge_into_delta(
         spark_session=spark,
@@ -192,22 +203,27 @@ def append_whale_alert(micro_batch_df, batch_id):
 def upsert_maker_taker_flow(micro_batch_df, batch_id):
     print(f"\n[Batch {batch_id}] Dang upsert incremental bang maker_taker_flow_1min...")
 
-    micro_batch_df.createOrReplaceTempView("silver_trades_batch")
-
-    df_maker_taker_batch = spark.sql("""
-        SELECT
-            symbol,
-            window(event_time, '1 minute').start AS window_start,
-            sum(CASE WHEN is_buyer_maker = false THEN quantity ELSE 0 END) AS buy_aggressive_qty,
-            sum(CASE WHEN is_buyer_maker = true THEN quantity ELSE 0 END) AS sell_aggressive_qty,
-            sum(CASE WHEN is_buyer_maker = false THEN quote_qty ELSE 0 END) AS buy_aggressive_quote_qty,
-            sum(CASE WHEN is_buyer_maker = true THEN quote_qty ELSE 0 END) AS sell_aggressive_quote_qty,
-            sum(CASE WHEN is_buyer_maker = false THEN quote_qty ELSE 0 END)
-                - sum(CASE WHEN is_buyer_maker = true THEN quote_qty ELSE 0 END) AS net_flow
-        FROM silver_trades_batch
-        WHERE is_buyer_maker IS NOT NULL
-        GROUP BY symbol, window(event_time, '1 minute')
-    """)
+    df_maker_taker_batch = (micro_batch_df
+        .filter(col("is_buyer_maker").isNotNull())
+        .groupBy(
+            col("symbol"),
+            window(col("event_time"), "1 minute").alias("time_window")
+        )
+        .agg(
+            sum(when(col("is_buyer_maker") == False, col("quantity")).otherwise(0)).alias("buy_aggressive_qty"),
+            sum(when(col("is_buyer_maker") == True, col("quantity")).otherwise(0)).alias("sell_aggressive_qty"),
+            sum(when(col("is_buyer_maker") == False, col("quote_qty")).otherwise(0)).alias("buy_aggressive_quote_qty"),
+            sum(when(col("is_buyer_maker") == True, col("quote_qty")).otherwise(0)).alias("sell_aggressive_quote_qty"),
+        )
+        .select(
+            col("symbol"),
+            col("time_window.start").alias("window_start"),
+            col("buy_aggressive_qty"),
+            col("sell_aggressive_qty"),
+            col("buy_aggressive_quote_qty"),
+            col("sell_aggressive_quote_qty"),
+            (col("buy_aggressive_quote_qty") - col("sell_aggressive_quote_qty")).alias("net_flow"),
+        ))
 
     merge_into_delta(
         spark_session=spark,
@@ -233,20 +249,27 @@ def upsert_maker_taker_flow(micro_batch_df, batch_id):
 def upsert_vwap_1min(micro_batch_df, batch_id):
     print(f"\n[Batch {batch_id}] Dang upsert incremental bang VWAP_1Min...")
 
-    micro_batch_df.createOrReplaceTempView("silver_trades_batch")
-
-    df_vwap_batch = spark.sql("""
-        SELECT
-            symbol,
-            window(event_time, '1 minute').start AS window_start,
-            sum(quantity) AS total_quantity,
-            sum(quote_qty) AS total_quote_qty,
-            count(*) AS trade_count,
-            max_by(price, event_time) AS close_price,
-            max(event_time) AS close_event_time
-        FROM silver_trades_batch
-        GROUP BY symbol, window(event_time, '1 minute')
-    """)
+    df_vwap_batch = (micro_batch_df
+        .groupBy(
+            col("symbol"),
+            window(col("event_time"), "1 minute").alias("time_window")
+        )
+        .agg(
+            sum("quantity").alias("total_quantity"),
+            sum("quote_qty").alias("total_quote_qty"),
+            count("*").alias("trade_count"),
+            expr("max_by(price, event_time)").alias("close_price"),
+            max("event_time").alias("close_event_time"),
+        )
+        .select(
+            col("symbol"),
+            col("time_window.start").alias("window_start"),
+            col("total_quantity"),
+            col("total_quote_qty"),
+            col("trade_count"),
+            col("close_price"),
+            col("close_event_time"),
+        ))
 
     if df_vwap_batch.rdd.isEmpty():
         return
