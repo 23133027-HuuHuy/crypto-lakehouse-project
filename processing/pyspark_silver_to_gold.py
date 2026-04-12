@@ -1,4 +1,3 @@
-from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
@@ -42,32 +41,6 @@ def path_exists(path_str):
     return fs.exists(path_obj)
 
 
-def is_delta_table(path_str):
-    try:
-        return DeltaTable.isDeltaTable(spark, path_str)
-    except Exception:
-        return False
-
-
-def merge_into_delta(source_df, target_path, merge_condition, set_map):
-    if source_df.rdd.isEmpty():
-        return
-
-    if not is_delta_table(target_path):
-        (source_df.write
-            .format("delta")
-            .mode("append")
-            .save(target_path))
-        return
-
-    delta_table = DeltaTable.forPath(spark, target_path)
-    (delta_table.alias("target")
-        .merge(source_df.alias("source"), merge_condition)
-        .whenMatchedUpdate(set=set_map)
-        .whenNotMatchedInsertAll()
-        .execute())
-
-
 if not path_exists(silver_path):
     print(f"Khong tim thay du lieu Silver tai: {silver_path}")
     print("Vui long chay pipeline Bronze -> Silver truoc, hoac kiem tra lai duong dan Delta tren MinIO.")
@@ -88,65 +61,53 @@ df_silver = (spark.readStream
     ))
 
 
-def upsert_ohlc_1min(df_batch, batch_id):
-    print(f"\n[Batch {batch_id}] Dang upsert incremental bang OHLC_1Min...")
+def load_silver_snapshot():
+    return (spark.read
+        .format("delta")
+        .load(silver_path)
+        .filter(
+            col("symbol").isNotNull() &
+            col("price").isNotNull() &
+            col("quantity").isNotNull() &
+            col("quote_qty").isNotNull() &
+            col("event_time").isNotNull()
+        ))
 
-    df_batch.createOrReplaceTempView("silver_trades_batch")
 
-    df_ohlc_batch = spark.sql("""
+def rebuild_ohlc_1min(_, batch_id):
+    print(f"\n[Batch {batch_id}] Dang tinh lai bang OHLC_1Min tu toan bo lop Silver...")
+
+    df_silver_full = load_silver_snapshot()
+    df_silver_full.createOrReplaceTempView("silver_trades_full")
+
+    df_ohlc_snapshot = spark.sql("""
         SELECT
             symbol,
             window(event_time, '1 minute').start AS candle_time,
             min_by(price, event_time) AS open_price,
-            min(event_time) AS open_event_time,
             max(price) AS high_price,
             min(price) AS low_price,
             max_by(price, event_time) AS close_price,
-            max(event_time) AS close_event_time,
             sum(quantity) AS total_quantity,
             sum(quote_qty) AS total_quote_qty,
             count(*) AS total_trades
-        FROM silver_trades_batch
+        FROM silver_trades_full
         GROUP BY symbol, window(event_time, '1 minute')
     """)
 
-    merge_into_delta(
-        source_df=df_ohlc_batch,
-        target_path=gold_ohlc_path,
-        merge_condition="""
-            target.symbol = source.symbol
-            AND target.candle_time = source.candle_time
-        """,
-        set_map={
-            "open_price": """
-                CASE
-                    WHEN source.open_event_time < target.open_event_time THEN source.open_price
-                    ELSE target.open_price
-                END
-            """,
-            "open_event_time": "least(target.open_event_time, source.open_event_time)",
-            "high_price": "greatest(target.high_price, source.high_price)",
-            "low_price": "least(target.low_price, source.low_price)",
-            "close_price": """
-                CASE
-                    WHEN source.close_event_time > target.close_event_time THEN source.close_price
-                    ELSE target.close_price
-                END
-            """,
-            "close_event_time": "greatest(target.close_event_time, source.close_event_time)",
-            "total_quantity": "target.total_quantity + source.total_quantity",
-            "total_quote_qty": "target.total_quote_qty + source.total_quote_qty",
-            "total_trades": "target.total_trades + source.total_trades",
-        }
-    )
+    (df_ohlc_snapshot.write
+        .format("delta")
+        .mode("overwrite")
+        .save(gold_ohlc_path))
 
 
-def upsert_maker_taker_flow(df_batch, batch_id):
-    print(f"\n[Batch {batch_id}] Dang upsert incremental bang maker_taker_flow_1min...")
+def rebuild_maker_taker_flow(_, batch_id):
+    print(f"\n[Batch {batch_id}] Dang tinh lai bang maker_taker_flow_1min...")
 
-    df_batch.createOrReplaceTempView("silver_trades_batch")
+    df_silver_full = load_silver_snapshot()
+    df_silver_full.createOrReplaceTempView("silver_trades_full")
 
-    df_maker_taker_batch = spark.sql("""
+    df_maker_taker_snapshot = spark.sql("""
         SELECT
             symbol,
             window(event_time, '1 minute').start AS window_start,
@@ -156,147 +117,47 @@ def upsert_maker_taker_flow(df_batch, batch_id):
             sum(CASE WHEN is_buyer_maker = true THEN quote_qty ELSE 0 END) AS sell_aggressive_quote_qty,
             sum(CASE WHEN is_buyer_maker = false THEN quote_qty ELSE 0 END)
                 - sum(CASE WHEN is_buyer_maker = true THEN quote_qty ELSE 0 END) AS net_flow
-        FROM silver_trades_batch
+        FROM silver_trades_full
         WHERE is_buyer_maker IS NOT NULL
         GROUP BY symbol, window(event_time, '1 minute')
     """)
 
-    merge_into_delta(
-        source_df=df_maker_taker_batch,
-        target_path=gold_maker_taker_path,
-        merge_condition="""
-            target.symbol = source.symbol
-            AND target.window_start = source.window_start
-        """,
-        set_map={
-            "buy_aggressive_qty": "target.buy_aggressive_qty + source.buy_aggressive_qty",
-            "sell_aggressive_qty": "target.sell_aggressive_qty + source.sell_aggressive_qty",
-            "buy_aggressive_quote_qty": "target.buy_aggressive_quote_qty + source.buy_aggressive_quote_qty",
-            "sell_aggressive_quote_qty": "target.sell_aggressive_quote_qty + source.sell_aggressive_quote_qty",
-            "net_flow": "target.net_flow + source.net_flow",
-        }
-    )
+    (df_maker_taker_snapshot.write
+        .format("delta")
+        .mode("overwrite")
+        .save(gold_maker_taker_path))
 
 
-def upsert_vwap_1min(df_batch, batch_id):
-    print(f"\n[Batch {batch_id}] Dang upsert incremental bang VWAP_1Min...")
+def rebuild_vwap_1min(_, batch_id):
+    print(f"\n[Batch {batch_id}] Dang tinh lai bang VWAP_1Min...")
 
-    df_batch.createOrReplaceTempView("silver_trades_batch")
+    df_silver_full = load_silver_snapshot()
+    df_silver_full.createOrReplaceTempView("silver_trades_full")
 
-    df_vwap_batch = spark.sql("""
+    df_vwap_snapshot = spark.sql("""
         SELECT
             symbol,
             window(event_time, '1 minute').start AS window_start,
             sum(quantity) AS total_quantity,
             sum(quote_qty) AS total_quote_qty,
             count(*) AS trade_count,
-            max_by(price, event_time) AS close_price,
-            max(event_time) AS close_event_time
-        FROM silver_trades_batch
+            sum(quote_qty) / sum(quantity) AS vwap_price,
+            avg(quantity) AS avg_trade_size,
+            max_by(price, event_time) - (sum(quote_qty) / sum(quantity)) AS close_vs_vwap_diff,
+            ((max_by(price, event_time) - (sum(quote_qty) / sum(quantity))) / (sum(quote_qty) / sum(quantity))) * 100
+                AS close_vs_vwap_pct
+        FROM silver_trades_full
         GROUP BY symbol, window(event_time, '1 minute')
     """)
 
-    if df_vwap_batch.rdd.isEmpty():
-        return
+    (df_vwap_snapshot.write
+        .format("delta")
+        .mode("overwrite")
+        .save(gold_vwap_path))
 
-    if not is_delta_table(gold_vwap_path):
-        df_vwap_initial = df_vwap_batch.selectExpr(
-            "symbol",
-            "window_start",
-            "total_quantity",
-            "total_quote_qty",
-            "trade_count",
-            "close_price",
-            "close_event_time",
-            "total_quote_qty / total_quantity AS vwap_price",
-            "total_quantity / trade_count AS avg_trade_size",
-            "close_price - (total_quote_qty / total_quantity) AS close_vs_vwap_diff",
-            "((close_price - (total_quote_qty / total_quantity)) / (total_quote_qty / total_quantity)) * 100 AS close_vs_vwap_pct",
-        )
-        (df_vwap_initial.write
-            .format("delta")
-            .mode("append")
-            .save(gold_vwap_path))
-        return
-
-    delta_table = DeltaTable.forPath(spark, gold_vwap_path)
-    (delta_table.alias("target")
-        .merge(
-            df_vwap_batch.alias("source"),
-            """
-                target.symbol = source.symbol
-                AND target.window_start = source.window_start
-            """
-        )
-        .whenMatchedUpdate(set={
-            "total_quantity": "target.total_quantity + source.total_quantity",
-            "total_quote_qty": "target.total_quote_qty + source.total_quote_qty",
-            "trade_count": "target.trade_count + source.trade_count",
-            "close_price": """
-                CASE
-                    WHEN source.close_event_time > target.close_event_time THEN source.close_price
-                    ELSE target.close_price
-                END
-            """,
-            "close_event_time": "greatest(target.close_event_time, source.close_event_time)",
-            "vwap_price": """
-                (target.total_quote_qty + source.total_quote_qty)
-                / (target.total_quantity + source.total_quantity)
-            """,
-            "avg_trade_size": """
-                (target.total_quantity + source.total_quantity)
-                / (target.trade_count + source.trade_count)
-            """,
-            "close_vs_vwap_diff": """
-                (
-                    CASE
-                        WHEN source.close_event_time > target.close_event_time THEN source.close_price
-                        ELSE target.close_price
-                    END
-                ) - (
-                    (target.total_quote_qty + source.total_quote_qty)
-                    / (target.total_quantity + source.total_quantity)
-                )
-            """,
-            "close_vs_vwap_pct": """
-                (
-                    (
-                        CASE
-                            WHEN source.close_event_time > target.close_event_time THEN source.close_price
-                            ELSE target.close_price
-                        END
-                    ) - (
-                        (target.total_quote_qty + source.total_quote_qty)
-                        / (target.total_quantity + source.total_quantity)
-                    )
-                ) / (
-                    (target.total_quote_qty + source.total_quote_qty)
-                    / (target.total_quantity + source.total_quantity)
-                ) * 100
-            """,
-        })
-        .whenNotMatchedInsert(values={
-            "symbol": "source.symbol",
-            "window_start": "source.window_start",
-            "total_quantity": "source.total_quantity",
-            "total_quote_qty": "source.total_quote_qty",
-            "trade_count": "source.trade_count",
-            "close_price": "source.close_price",
-            "close_event_time": "source.close_event_time",
-            "vwap_price": "source.total_quote_qty / source.total_quantity",
-            "avg_trade_size": "source.total_quantity / source.trade_count",
-            "close_vs_vwap_diff": "source.close_price - (source.total_quote_qty / source.total_quantity)",
-            "close_vs_vwap_pct": """
-                ((source.close_price - (source.total_quote_qty / source.total_quantity))
-                / (source.total_quote_qty / source.total_quantity)) * 100
-            """,
-        })
-        .execute())
-
-
-print("3. Dang tao bang Gold OHLC_1Min theo logic incremental merge...")
+print("3. Dang tao bang Gold OHLC_1Min bang PySpark SQL...")
 query_ohlc = (df_silver.writeStream
-    .foreachBatch(upsert_ohlc_1min)
+    .foreachBatch(rebuild_ohlc_1min)
     .outputMode("append")
     .option("checkpointLocation", checkpoint_ohlc)
     .start())
@@ -324,16 +185,16 @@ query_whale = (df_whale_alert.writeStream
     .option("checkpointLocation", checkpoint_whale)
     .start(gold_whale_path))
 
-print("5. Dang tao bang Gold maker_taker_flow_1min theo logic incremental merge...")
+print("5. Dang tao bang Gold maker_taker_flow_1min bang PySpark SQL...")
 query_maker_taker = (df_silver.writeStream
-    .foreachBatch(upsert_maker_taker_flow)
+    .foreachBatch(rebuild_maker_taker_flow)
     .outputMode("append")
     .option("checkpointLocation", checkpoint_maker_taker)
     .start())
 
-print("6. Dang tao bang Gold VWAP_1Min theo logic incremental merge...")
+print("6. Dang tao bang Gold VWAP_1Min bang PySpark SQL...")
 query_vwap = (df_silver.writeStream
-    .foreachBatch(upsert_vwap_1min)
+    .foreachBatch(rebuild_vwap_1min)
     .outputMode("append")
     .option("checkpointLocation", checkpoint_vwap)
     .start())
