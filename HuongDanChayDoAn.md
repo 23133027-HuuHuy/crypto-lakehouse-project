@@ -109,7 +109,6 @@ docker-compose exec prefect-worker sh /app/scripts/prefect_run_monitor.sh
 
 Chạy tuần tự:
 1. `python processing/spark_batch_to_bronze.py` (đọc trực tiếp CSV local từ `/app/workspace`)
-2. `python processing/rebuild_silver_gold.py`
 
 Có retry + logging ở từng task.
 

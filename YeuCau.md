@@ -20,7 +20,6 @@ Batch:
 
 * python ingestion/batch_upload.py
 * docker compose exec spark-env python /app/processing/spark_batch_to_bronze.py
-* docker compose exec spark-env python /app/processing/rebuild_silver_gold.py
 
 Streaming (chạy nhiều terminal):
 
@@ -123,7 +122,6 @@ NHIỆM VỤ CỦA BẠN:
 
      * batch_upload
      * spark_batch_to_bronze
-     * rebuild_silver_gold
    * có retry và logging
 
 5. Cấu hình Prefect deployment:
