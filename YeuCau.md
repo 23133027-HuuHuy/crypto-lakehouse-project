@@ -7,7 +7,7 @@ Tôi đã xây dựng một hệ thống Data Lakehouse realtime với stack nh�
 * MinIO (S3-compatible) để lưu trữ (Raw, Bronze, Silver, Gold)
 * Trino để query
 * Metabase để làm dashboard
-* FastAPI/Flask để xây dựng Gold API
+* Gold API (đọc Trino lớp Gold) để BI tools (Power BI/Metabase) kết nối qua API URL
 * Docker Compose để quản lý hạ tầng
 
 ---
@@ -92,9 +92,9 @@ NHIỆM VỤ CỦA BẠN:
      * kafka
      * minio
      * spark-env
-     * trino
-     * metabase
-     * gold-api
+      * trino
+      * gold-api
+      * metabase
      * stream-producer
      * stream-bronze
      * stream-silver

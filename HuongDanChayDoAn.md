@@ -45,8 +45,11 @@ Truy cập:
 
 - Prefect UI: `http://localhost:4200`
 - MinIO: `http://localhost:9001`
+- Trino: `http://localhost:8080` (chỉ khi chạy profile `full`)
 - Gold API: `http://localhost:5000` (chỉ khi chạy profile `full`)
-- Metabase/Trino: chạy profile `full`
+- Metabase: `http://localhost:3000` (chỉ khi chạy profile `full`)
+
+Lưu ý BI: dùng Gold API (`localhost:5000`) cho dashboard, API sẽ query vào Trino lớp Gold.
 
 Chế độ đầy đủ (optional):
 
@@ -124,7 +127,7 @@ Có retry + logging ở từng task.
 
 ## 6) Luồng end-to-end khi `docker-compose up -d`
 
-1. Core services lên trước: Kafka, MinIO, Spark env, Trino, Metabase, Gold API.
+1. Core services lên trước: Kafka, MinIO, Spark env, Trino, Gold API, Metabase.
 2. Streaming services chạy liên tục và tự restart (`restart: unless-stopped`).
 3. Prefect Server mở API/UI.
 4. Prefect Worker kết nối Server và poll job từ `docker-pool`.

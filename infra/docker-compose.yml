@@ -201,18 +201,22 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: admin
-      MINIO_SECRET_KEY: password123
       API_PORT: 5000
       FLASK_DEBUG: "false"
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      TRINO_USER: admin
+      TRINO_CATALOG: delta
+      TRINO_SCHEMA: gold
+      TRINO_HTTP_SCHEME: http
     volumes:
       - ../:/app
     depends_on:
-      - minio
+      trino:
+        condition: service_started
     command: ["python", "/app/api/gold_api.py"]
-    mem_limit: 1g
-    cpus: "0.80"
+    mem_limit: 768m
+    cpus: "0.60"
     networks: [lakehouse-net]
 
   trino:
