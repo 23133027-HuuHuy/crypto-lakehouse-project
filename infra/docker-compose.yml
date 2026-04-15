@@ -171,6 +171,7 @@ services:
       SPARK_LOCAL_IP: 127.0.0.1
     volumes:
       - ../:/app
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app
     depends_on:
       prefect-server:
