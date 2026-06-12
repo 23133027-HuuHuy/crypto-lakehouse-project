@@ -1,289 +1,437 @@
 <div align="center">
 
-# 🏗️ Real-time Crypto Data Lakehouse Architecture
+# Real-time Crypto Data Lakehouse
 
-### Unified Batch & Streaming Pipeline
+### Unified Batch & Streaming Pipeline with Spark, Kafka, Delta Lake, MinIO and Prefect
 
-[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-3.x-E25A1C?logo=apachespark&logoColor=white)](https://spark.apache.org/)
+[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-4.1.1-E25A1C?logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Kafka](https://img.shields.io/badge/Apache%20Kafka-KRaft-231F20?logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
-[![Delta Lake](https://img.shields.io/badge/Delta%20Lake-ACID-00ADD8?logo=databricks&logoColor=white)](https://delta.io/)
+[![Delta Lake](https://img.shields.io/badge/Delta%20Lake-4.1.0-00ADD8?logo=databricks&logoColor=white)](https://delta.io/)
 [![MinIO](https://img.shields.io/badge/MinIO-S3--Compatible-C72E49?logo=minio&logoColor=white)](https://min.io/)
+[![Prefect](https://img.shields.io/badge/Prefect-2.20.25-1565C0?logo=prefect&logoColor=white)](https://www.prefect.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Prefect](https://img.shields.io/badge/Prefect-Orchestration-1565C0?logo=prefect&logoColor=white)](https://www.prefect.io/)
 
-> 🎓 **Đồ án môn Phân tích Dữ liệu lớn (Big Data Analytics)**
->
-> Trường Đại học Sư phạm Kỹ thuật TP.HCM (HCMUTE)
+**Đồ án môn Phân tích Dữ liệu lớn - HCMUTE**
 
----
-
-*Xây dựng hệ thống Data Lakehouse 5 lớp xử lý **15GB** dữ liệu Bitcoin lịch sử và luồng **Real-time** từ Binance API, sử dụng Spark, Kafka và Delta Lake với kiến trúc **Medallion Architecture** hợp nhất.*
+Hệ thống Data Lakehouse xử lý dữ liệu giao dịch BTC/USDT theo cả hai chế độ: batch từ file CSV lịch sử và streaming real-time từ Binance WebSocket.
 
 </div>
 
 ---
 
-## 📋 Mục lục
+## Mục Lục
 
-- [🔭 Tổng quan dự án](#-tổng-quan-dự-án)
-- [🏛️ Kiến trúc hệ thống](#️-kiến-trúc-hệ-thống)
-- [🥇 Medallion Architecture](#-medallion-architecture)
-- [🧬 ACID & Time Travel với Delta Lake](#-acid--time-travel-với-delta-lake)
-- [🛠️ Công nghệ sử dụng](#️-công-nghệ-sử-dụng)
-- [📁 Cấu trúc dự án](#-cấu-trúc-dự-án)
-- [🚀 Hướng dẫn cài đặt](#-hướng-dẫn-cài-đặt)
-- [🎬 Demo Script](#-demo-script)
-- [📊 Kết quả đạt được](#-kết-quả-đạt-được)
-- [📝 Giấy phép](#-giấy-phép)
-
----
-
-## 🔭 Tổng quan dự án
-
-Dự án xây dựng một hệ thống **Data Lakehouse** hoàn chỉnh, kết hợp ưu điểm của cả Data Lake (lưu trữ linh hoạt, chi phí thấp) và Data Warehouse (quản lý schema, truy vấn nhanh) để xử lý dữ liệu giao dịch tiền điện tử Bitcoin (BTC/USDT).
-
-### 🎯 Mục tiêu chính
-
-| # | Mục tiêu | Mô tả |
-|---|----------|--------|
-| 1 | **Unified Pipeline** | Xây dựng pipeline thống nhất xử lý cả **Batch** (15GB dữ liệu lịch sử) và **Streaming** (luồng real-time từ Binance). Không cần lưu qua lớp Raw trung gian. |
-| 2 | **Medallion Architecture** | Triển khai kiến trúc dữ liệu 3 tầng: **Bronze → Silver → Gold** để cải thiện dần chất lượng dữ liệu |
-| 3 | **ACID Compliance** | Đảm bảo tính toàn vẹn dữ liệu với **Delta Lake** (Atomicity, Consistency, Isolation, Durability) |
-| 4 | **Modern Infrastructure** | Sử dụng hạ tầng hiện đại điều phối bằng **Prefect 2.x**, hoàn toàn **Dockerized**, dễ dàng một chạm triển khai |
-
-### 📦 Nguồn dữ liệu
-
-| Loại | Nguồn | Mô tả | Khối lượng |
-|------|--------|--------|------------|
-| 📂 **Batch** | BTC Tick-Data CSV | Dữ liệu giao dịch lịch sử BTC/USDT theo từng tick, đọc trực tiếp từ Local Mount | **~15 GB** (13.1GB đã nạp) |
-| ⚡ **Streaming** | Binance WebSocket API | Luồng giao dịch real-time `btcusdt@aggTrade` | Liên tục, vô hạn |
+- [Tổng Quan](#tổng-quan)
+- [Kiến Trúc](#kiến-trúc)
+- [Luồng Dữ Liệu](#luồng-dữ-liệu)
+- [Công Nghệ](#công-nghệ)
+- [Cấu Trúc Project](#cấu-trúc-project)
+- [Hướng Dẫn Chạy](#hướng-dẫn-chạy)
+- [Trino, Gold API Và BI](#trino-gold-api-và-bi)
+- [Prefect](#prefect)
+- [Lệnh Hữu Ích](#lệnh-hữu-ích)
+- [Giấy Phép](#giấy-phép)
 
 ---
 
-## 🏛️ Kiến trúc hệ thống
+## Tổng Quan
 
-Hệ thống được thiết kế theo mô hình **5 lớp (5-Layer Architecture)**, mỗi lớp đảm nhận một chức năng riêng biệt:
+Project xây dựng một nền tảng lakehouse cho dữ liệu crypto, kết hợp:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    🏗️ CRYPTO DATA LAKEHOUSE                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ LỚP 5: CONSUMPTION (Tiêu thụ dữ liệu)                     │   │
-│  │   📊 Dashboard  │  📈 Analytics  │  🤖 ML Models            │   │
-│  └──────────────────────────┬──────────────────────────────────┘   │
-│                              │                                      │
-│  ┌──────────────────────────▼──────────────────────────────────┐   │
-│  │ LỚP 4: COMPUTE (Xử lý - Apache Spark / Điều phối: Prefect) │   │
-│  │   • Batch Processing (SparkSQL, tự động hóa Job)             │   │
-│  │   • Stream Processing (Structured Streaming)                 │   │
-│  └──────────────────────────┬──────────────────────────────────┘   │
-│                              │                                      │
-│  ┌──────────────────────────▼──────────────────────────────────┐   │
-│  │ LỚP 3: METADATA (Quản lý siêu dữ liệu - Delta Lake)       │   │
-│  │   📋 Delta Transaction Log  │  🕐 Time Travel               │   │
-│  │   🔒 ACID Transactions      │  📐 Schema Evolution        │   │
-│  └──────────────────────────┬──────────────────────────────────┘   │
-│                              │                                      │
-│  ┌──────────────────────────▼──────────────────────────────────┐   │
-│  │ LỚP 2: STORAGE (Lưu trữ - MinIO S3)                        │   │
-│  │   🥉 Bronze (Raw)  →  🥈 Silver (Clean)  →  🥇 Gold (Agg)  │   │
-│  │   Object Storage hợp nhất Batch/Stream vào một bảng          │   │
-│  └──────────────────────────┬──────────────────────────────────┘   │
-│                              │                                      │
-│  ┌──────────────────────────▼──────────────────────────────────┐   │
-│  │ LỚP 1: INGESTION (Nạp dữ liệu)                             │   │
-│  │   📂 Batch: CSV Volumes   ⚡ Stream: Binance → Kafka      │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+- **Batch ingestion:** đọc các file CSV lịch sử trong `infra/workspace`.
+- **Streaming ingestion:** nhận trade real-time từ Binance WebSocket và đẩy vào Kafka topic `binance_trades`.
+- **Medallion Architecture:** chuẩn hóa dữ liệu qua các tầng `Bronze -> Silver -> Gold`.
+- **Delta Lake trên MinIO:** lưu dữ liệu dạng Delta table trên object storage S3-compatible.
+- **Prefect orchestration:** tự động deploy và trigger batch flow.
+- **Gold API:** cung cấp REST API để BI tools đọc dữ liệu Gold thông qua Trino.
+
+Nguồn dữ liệu chính:
+
+| Loại | Nguồn | Mô tả |
+|---|---|---|
+| Batch | CSV local | File giao dịch BTC/USDT đặt trong `infra/workspace/*.csv` |
+| Streaming | Binance WebSocket | Stream `btcusdt@aggTrade` theo thời gian thực |
+
+---
+
+## Kiến Trúc
+
+```text
+Binance WebSocket
+       |
+       v
+stream-producer  ->  Kafka topic: binance_trades
+       |                         |
+       |                         v
+       |                 stream-bronze
+       |                         |
+CSV files                         v
+infra/workspace/*.csv  ->  Bronze: all_crypto_trades
+                                 |
+                                 v
+                         Silver: btc_trades
+                                 |
+                                 v
+            Gold: OHLC, Whale Alert, Maker/Taker Flow, VWAP
+                                 |
+                                 v
+                         Trino / Gold API / BI
 ```
 
-### Chi tiết từng lớp
+Hạ tầng chạy bằng Docker Compose:
 
-#### 🔽 Lớp 1: Ingestion (Nạp dữ liệu)
-Thu thập gốc dữ liệu:
-- **Batch:** Data tĩnh nặng 15GB đặt sẵn ở ổ cứng (`infra/workspace/*.csv`).
-- **Streaming:** Script Python cào WebSocket thả qua Kafka Topic `binance_trades`.
-
-#### 💾 Lớp 2: Storage (Lưu trữ Medallion)
-Lưu vào Object Storage **MinIO**. Sắp xếp cấu trúc `lakehouse` chuẩn:
-- `all_crypto_trades` (Bronze): Khúc gỗ thô, trộn chung 2 luồng Batch & Kafka JSON.
-- `btc_trades` (Silver): Gỗ bào, ghép cột/Schema, bóc tách JSON và lọc rác chuẩn chỉ.
-- Tầng Gold: Data tổng hợp.
-
-#### 📋 Lớp 3: Metadata (Delta Lake)
-- Kể chuyện bằng **Schema Evolution**: khi Stream Kafka ném thêm JSON, Delta tự tạo thêm cột `value` tại bảng đã có CSV mà không làm vỡ cấu trúc.
-- Quản lý phiên bản Checkpoint Stream và phiên bản bảng tin.
-
-#### ⚙️ Lớp 4: Compute & Orchestration (Spark & Prefect)
-- Cụm Spark Structured Streaming đọc 24/7 trực tiếp trên bảng Bronze để tinh luyện ra Silver.
-- Master node **Prefect** dàn xếp các Flow chạy tự động và trigger dọn dẹp data hệ thống (Monitoring, Restart Containers).
+| Nhóm | Service | Vai trò |
+|---|---|---|
+| Streaming | `stream-producer` | Đọc Binance WebSocket và gửi JSON vào Kafka |
+| Streaming | `stream-bronze` | Đọc Kafka, append vào Delta Bronze |
+| Streaming | `stream-silver` | Đọc Bronze, parse/clean/dedupe, ghi Silver |
+| Streaming | `stream-gold` | Đọc Silver, tạo các bảng Gold analytics |
+| Storage | `minio` | Object storage lưu Delta tables |
+| Message broker | `kafka` | Kafka KRaft, không dùng ZooKeeper |
+| Orchestration | `prefect-server`, `prefect-worker` | UI/API, worker và batch deployment |
+| Optional BI | `trino`, `gold-api`, `metabase` | Query Gold, REST API và dashboard |
 
 ---
 
-## 🥇 Medallion Architecture (Hợp Nhất)
+## Luồng Dữ Liệu
 
-Medallion Architecture (Kiến trúc Huy chương) chia dữ liệu thành **3 tầng chất lượng** tăng dần:
+### Bronze
 
-```
-    CSV / KAFKA
-         │
-         ▼
-   ┌──────────┐         ┌──────────┐         ┌──────────┐
-   │  🥉      │  Spark  │  🥈      │  Spark  │  🥇      │
-   │  BRONZE  │ ──────► │  SILVER  │ ──────► │   GOLD   │
-   │ (Unified)│  Stream │ (Clean)  │  Batch  │  (Agg)   │
-   └──────────┘         └──────────┘         └──────────┘
-    Hợp nhất 1 bảng      Đã làm sạch         Sẵn sàng
-    Batch & Stream        chuẩn hóa          phân tích
+Đường dẫn:
+
+```text
+s3a://lakehouse/bronze/all_crypto_trades
 ```
 
-| Tầng | Cũ (Legacy) | Hiện Tại (Unified) |
-|------|-----------|-------------------|
-| 🥉 **Bronze** | Đẩy qua Raw layer MinIO riêng biệt, hoặc đứt đoạn từng thư mục. | **Trực tiếp từ Nguồn**. Spark đọc thẳng Local CSV và Stream Kafka nối đuôi vào chung 1 bảng duy nhất (`all_crypto_trades`) nhờSchema Evolution. |
-| 🥈 **Silver** | Code rườm rà. | Spark Streaming 24/7 đứng gác ở Bronze Table. Parsing JSON và cột CSV bù trừ nhau, đổi Epoch Timestamps, xuất ra bảng sạch `btc_trades`. |
-| 🥇 **Gold** | — | Dữ liệu tổng hợp theo thời gian (OHLCV), sẵn sàng gọi lên các UI báo cáo. |
+Bronze là bảng Delta hợp nhất:
 
-### Tại sao cần Medallion Architecture Này?
+- Batch CSV được ghi bởi `processing/spark_batch_to_bronze.py`.
+- Streaming Kafka được ghi bởi `processing/pyspark_stream_to_bronze.py`.
+- Schema được merge để cùng chứa dữ liệu CSV và cột `value` từ Kafka JSON.
 
-1. **Hiệu suất (Performance):** Lược bỏ được bước đẩy file lên Raw Data Lake giúp bớt tắc nghẽn IO.
-2. **Unified Data:** Gói gọn cả 2 hình thái Batch & Stream vô 1 bảng duy nhất tại Bronze. Kiến trúc trở nên rất sạch.
-3. **Data Quality:** Mỗi tầng tăng thêm một lớp kiểm tra chất lượng chặt chẽ.
+### Silver
 
----
+Đường dẫn:
 
-## 🧬 ACID & Time Travel với Delta Lake
-
-### Tính chất ACID
-
-| Tính chất | Áp dụng trong dự án |
-|-----------|---------------------|
-| **A**tomicity | File ghi xuống MinIO thành công hoàn toàn hoặc không tạo rác. |
-| **C**onsistency | Schema được enforce chặt, Evolution được allow explicitly. |
-| **I**solation | *Batch và Streaming đang ghi APPEND song song trên cùng 1 bảng* mà không bị crash. |
-| **D**urability | Transaction log được lưu trữ bền vững trong thư mục `_delta_log/`. |
-
----
-
-## 🛠️ Công nghệ sử dụng
-
-| Lớp | Công nghệ | File/Code | Vai trò |
-|-----|-----------|-----------|---------|
-| 🔽 Ingestion | **Apache Kafka** (KRaft) | `docker-compose.yml` | Broker Streaming, KHÔNG dùng Zookeeper |
-| 🔽 Ingestion | **Binance WebSocket** | `stream_to_kafka.py` | Cung cấp luồng trades real-time |
-| 💾 Storage | **MinIO** | `lakehouse/` | Bể chứa S3 lưu Data |
-| 📋 Metadata | **Delta Lake** | Thư viện Spark | Cân schema, nối file, Checkpointing |
-| ⚙️ Compute | **Apache Spark** | `processing/*.py` | Lọc, parse, và push dữ liệu các tầng |
-| 🤖 Orchestration | **Prefect 2.20+** | `prefect.yaml`, `orchestration/` | Lên lịch, tạo Worker nhúng luồng Batch |
-| 🐳 Infra | **Docker Compose** | `infra/` | Setup lên toàn bộ hệ thống bằng 1 lệnh |
-
----
-
-## 📁 Cấu trúc dự án
-
+```text
+s3a://lakehouse/silver/btc_trades
 ```
+
+Silver được tạo bởi `processing/pyspark_bronze_to_silver.py`:
+
+- Parse JSON từ Kafka.
+- Chuẩn hóa schema CSV và stream về cùng một định dạng.
+- Tạo `event_id` để dedupe và upsert idempotent.
+- Lọc dữ liệu lỗi như giá, khối lượng hoặc thời gian không hợp lệ.
+
+Schema chính:
+
+| Cột | Ý nghĩa |
+|---|---|
+| `event_id` | Khóa định danh giao dịch |
+| `symbol` | Cặp giao dịch, mặc định `BTCUSDT` |
+| `price` | Giá giao dịch |
+| `quantity` | Khối lượng |
+| `quote_qty` | Giá trị theo USDT |
+| `event_time` | Thời gian giao dịch |
+| `is_buyer_maker` | Maker/taker side từ Binance |
+
+### Gold
+
+Gold được tạo bởi `processing/pyspark_silver_to_gold.py`.
+
+| Bảng Delta | Đường dẫn | Nội dung |
+|---|---|---|
+| `OHLC_1Min` | `s3a://lakehouse/gold/OHLC_1Min` | Nến 1 phút: open, high, low, close, volume |
+| `Whale_Alert` | `s3a://lakehouse/gold/Whale_Alert` | Giao dịch lớn trên 50,000 USDT |
+| `maker_taker_flow_1min` | `s3a://lakehouse/gold/maker_taker_flow_1min` | Dòng mua/bán chủ động theo phút |
+| `VWAP_1Min` | `s3a://lakehouse/gold/VWAP_1Min` | VWAP, average trade size, độ lệch close so với VWAP |
+
+---
+
+## Công Nghệ
+
+| Thành phần | Công nghệ |
+|---|---|
+| Streaming broker | Apache Kafka 7.7.0, KRaft mode |
+| Stream source | Binance WebSocket API |
+| Processing | PySpark 4.1.1, Spark Structured Streaming |
+| Table format | Delta Lake 4.1.0 |
+| Object storage | MinIO |
+| Orchestration | Prefect 2.20.25 |
+| Query engine | Trino 443 |
+| API | Flask, Flask-CORS, Trino Python client |
+| Dashboard | Metabase, hoặc BI tool gọi Gold API |
+| Runtime | Docker Compose |
+
+---
+
+## Cấu Trúc Project
+
+```text
 crypto-lakehouse-project/
-│
-├── 🐳 infra/                           ← Hạ tầng Docker (Docker Compose & Dockerfiles)
-│   ├── workspace/                      ← Mount CSV Local (Chứa khối 15GB BTC Trades)
-│   └── docker-compose.yml              ← Dựng toàn bộ Kafka, MinIO, Spark, Prefect cực êm
-│
-├── 🐍 ingestion/                       ← Nguồn Streaming
-│   └── stream_to_kafka.py              ← Binance → Kafka
-│
-├── 🧠 orchestration/                   ← Prefect Flows
-│   ├── batch_flow.py                   ← Định nghĩa tiến trình chạy ngầm
-│   └── monitor_flow.py                 ← Theo dõi sức khỏe hệ thống
-│
-└── ⚙️ processing/                      ← Lõi Spark Transformation
-    ├── spark_batch_to_bronze.py        ← Volume CSV → Delta Bronze
-    ├── pyspark_stream_to_bronze.py     ← Kafka → Delta Bronze (Append chung)
-    └── pyspark_bronze_to_silver.py     ← Bronze → Silver (Streaming 24/7 Cleaning)
+|-- api/
+|   |-- gold_api.py                    # REST API đọc Gold qua Trino
+|   `-- requirements.txt
+|-- infra/
+|   |-- docker-compose.yml             # Kafka, MinIO, streaming, Prefect, optional BI
+|   |-- Dockerfile.prefect
+|   |-- Dockerfile.spark
+|   |-- Dockerfile.stream
+|   `-- trino/catalog/delta.properties
+|-- ingestion/
+|   |-- stream_to_kafka.py             # Binance -> Kafka
+|   `-- batch_upload.py                # Upload CSV vào MinIO raw_data, legacy/helper
+|-- orchestration/
+|   |-- batch_flow.py                  # Prefect batch flow
+|   |-- monitor_flow.py                # Prefect monitor flow
+|   `-- deployments/
+|-- processing/
+|   |-- spark_batch_to_bronze.py       # CSV -> Bronze
+|   |-- pyspark_stream_to_bronze.py    # Kafka -> Bronze
+|   |-- pyspark_bronze_to_silver.py    # Bronze -> Silver
+|   |-- pyspark_silver_to_gold.py      # Silver -> Gold
+|   |-- check_data_silver.py
+|   |-- clean_old_medallion_data.py
+|   `-- clean_corrupt_checkpoints.py
+|-- scripts/
+|   |-- prefect_run_batch.sh
+|   |-- prefect_run_monitor.sh
+|   |-- prefect_deploy.sh
+|   `-- run_trino_register_gold.ps1
+|-- prefect.yaml
+|-- ChayDoAn.md
+|-- HuongDanChayDoAn.md
+`-- README.md
 ```
 
 ---
 
-## 🚀 Hướng dẫn cài đặt
+## Hướng Dẫn Chạy
 
-### ✅ Yêu cầu hệ thống
+### Yêu Cầu
 
-- **Docker Desktop** (Đã bật WSL2 trên Windows)
-- **RAM**: Tối thiểu **8 GB** (Khuyến nghị 16 GB)
-- **Disk**: 25 GB trống để chạy hạ tầng và dữ liệu.
-- Tài nguyên mạng ổn định (Để tải Docker Image và hứng Data).
+- Docker Desktop đang chạy.
+- Máy có Internet để pull image, tải Spark packages và nhận stream Binance.
+- RAM tối thiểu 8 GB, khuyến nghị 16 GB.
+- Nếu chạy batch, đặt file CSV vào:
 
-### 📝 Bước 1: Clone Repository & Data
-
-```bash
-git clone https://github.com/HuynhThach/crypto-lakehouse-project.git
-cd crypto-lakehouse-project
+```text
+infra/workspace/
 ```
 
-- Nhét các file BTC CSV lịch sử của bạn vào thư mục `infra/workspace/` (VD: `BTCUSDT-trades-*.csv`).
+Ví dụ:
 
-### 🐳 Bước 2: Kích hoạt hệ thống vĩnh cửu (1 Lệnh duy nhất)
+```text
+infra/workspace/BTCUSDT-trades-*.csv
+```
 
-Kiến trúc đã được Dockerized tiêu chuẩn. Chạy lệnh:
+### Chạy Pipeline Cốt Lõi
 
-```bash
+Từ thư mục gốc project:
+
+```powershell
 cd infra
-docker-compose up -d --build
+docker compose up -d --build
+docker compose ps
 ```
 
-**Điều gì thực sự xảy ra đằng sau lệnh này?**
-1. Docker gọi lên Kafka, MinIO.
-2. Các Container **Stream (Producer, Bronze, Silver)** tự động run background kết nối Binance API -> Kafka -> Bronze -> Silver 24/7.
-3. Server **Prefect** đứng lên, kích hoạt Worker. Worker tự động đọc `prefect.yaml` ghim sẵn các task schedule mà **không cần deploy bằng tay**.
+Sau khi chạy lệnh trên:
 
-### 🌐 Bước 3: Xem các Bảng điều khiển
+- Kafka và MinIO khởi động.
+- `stream-producer`, `stream-bronze`, `stream-silver`, `stream-gold` chạy liên tục.
+- Prefect Server mở tại `http://localhost:4200`.
+- Prefect Worker tự tạo `default-pool`, deploy flow trong `prefect.yaml` và bắt đầu nhận job.
+
+### Chạy Batch Ingestion
+
+Nếu có CSV trong `infra/workspace`, trigger batch flow:
+
+```powershell
+docker compose exec prefect-worker sh /app/scripts/prefect_run_batch.sh
+```
+
+Batch flow sẽ chạy:
+
+```text
+processing/spark_batch_to_bronze.py
+```
+
+Dữ liệu CSV được append vào Bronze, sau đó các service streaming Silver và Gold sẽ tự xử lý tiếp.
+
+### URL Dịch Vụ Cơ Bản
 
 | Service | URL | Ghi chú |
-|---------|-----|---------|
-| **Prefect UI** | [http://localhost:4200](http://localhost:4200) | Xem các Flow màu xanh mướt |
-| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` / `password123` |
+|---|---|---|
+| Prefect UI | http://localhost:4200 | Theo dõi deployment và flow run |
+| MinIO Console | http://localhost:9001 | `admin` / `password123` |
 
-### ▶️ Bước 4: Chạy nạp luồng quá khứ (Batch Ingestion)
+---
 
-Streaming tự chạy rồi, giờ mình ném 15GB dữ liệu tĩnh vào. Mở Terminal và ra lệnh cho Prefect trigger Flow Batch:
+## Trino, Gold API Và BI
 
-```bash
-docker-compose exec prefect-worker sh /app/scripts/prefect_run_batch.sh
+Các service BI là optional và chỉ chạy khi bật profile `full`.
+
+```powershell
+cd infra
+docker compose --profile full up -d --build
+docker compose ps
 ```
 
-Dữ liệu sẽ được đẩy thẳng từ khối local vào chung "nồi lẩu" `all_crypto_trades` (Bronze), sau đó tầng Silver Stream sẽ tự tóm cổ khối data này làm sạch dần.
+URL optional:
+
+| Service | URL |
+|---|---|
+| Trino | http://localhost:8080 |
+| Gold API | http://localhost:5000 |
+| Metabase | http://localhost:3000 |
+
+### Đăng Ký Bảng Gold Vào Trino
+
+Sau khi Gold đã có dữ liệu, quay về thư mục gốc project và chạy script:
+
+```powershell
+cd ..
+.\scripts\run_trino_register_gold.ps1
+```
+
+Script sẽ:
+
+- Tạo schema `delta.gold` nếu chưa có.
+- Register 4 bảng Gold: `ohlc_1min`, `whale_alert`, `maker_taker_flow_1min`, `vwap_1min`.
+- Chạy query mẫu để kiểm tra.
+
+### Gold API
+
+API đọc dữ liệu từ Trino:
+
+| Endpoint | Mô tả |
+|---|---|
+| `GET /api/health` | Kiểm tra kết nối API -> Trino |
+| `GET /api/ohlc/latest?limit=100` | Dữ liệu OHLC mới nhất |
+| `GET /api/whale/latest?limit=50&min_value=50000` | Giao dịch lớn |
+| `GET /api/flow/latest?limit=100` | Maker/taker flow |
+| `GET /api/vwap/latest?limit=100` | VWAP |
+| `GET /api/dashboard/summary` | Summary cho dashboard |
+| `GET /api/stats` | Số dòng từng bảng Gold |
+
+Ví dụ:
+
+```powershell
+curl "http://localhost:5000/api/health"
+curl "http://localhost:5000/api/ohlc/latest?limit=20"
+curl "http://localhost:5000/api/dashboard/summary?symbol=BTCUSDT"
+```
 
 ---
 
-## 🎬 Demo Script Mới
+## Prefect
 
-> Dành cho buổi bảo vệ đồ án trước hội đồng
+File `prefect.yaml` hiện deploy deployment:
 
-**Phần 1: Show tính tự động hóa (1 phút)**
-- Bật `docker ps` show 6 container vững chãi.
-- Mở `localhost:4200` chứng minh Prefect Worker vừa quét xong và dàn trận Flow chuẩn xác.
+```text
+lakehouse-batch-flow/batch-prod
+```
 
-**Phần 2: Show độ dẻo dai Medallion / Schema Evolution (2 phút)**
-- Kích hoạt lệnh chạy Batch (`prefect_run_batch.sh`).
-- Show Code `spark_batch_to_bronze.py`: Nhấn mạnh là chạy thẳng xuống `lakehouse/bronze/all_crypto_trades` mà không mượn vùng đệm.
-- Show Code `pyspark_stream_to_bronze.py`: Nhấn mạnh là bảng đang được Append trực tiếp với chế độ Kafka, sinh ra cột `value` kẹp chung schema CSV.
+Lịch chạy:
 
-**Phần 3: Show "Nồi lọc" Silver (2 phút)**
-- Mở `pyspark_bronze_to_silver.py`. Trình bày đoạn logic tự động phát hiện cột `value` (Của Stream) và cột `Price` (Của Batch) để Parsing bù trừ nhau. Đưa về 1 chuẩn Schema duy nhất dưới dạng Micro-batch liên tục.
+```text
+0 */2 * * *  Asia/Ho_Chi_Minh
+```
+
+Worker trong `infra/docker-compose.yml` tự chạy:
+
+```text
+prefect work-pool create default-pool --type process
+prefect deploy --all
+prefect worker start --pool default-pool
+```
+
+Trigger thủ công:
+
+```powershell
+docker compose exec prefect-worker sh /app/scripts/prefect_run_batch.sh
+```
+
+Project cũng có `orchestration/monitor_flow.py` và script:
+
+```powershell
+docker compose exec prefect-worker sh /app/scripts/prefect_run_monitor.sh
+```
+
+Lưu ý: `prefect_run_monitor.sh` cần deployment `lakehouse-stream-monitor-flow/monitor-prod`. Nếu muốn dùng monitor flow bằng Prefect, cần deploy thêm deployment này hoặc bổ sung vào `prefect.yaml`.
 
 ---
 
-## 📝 Giấy phép
+## Lệnh Hữu Ích
 
-Dự án được phát hành dưới giấy phép [MIT License](LICENSE).
+### Xem Log
+
+```powershell
+cd infra
+docker compose logs -f stream-producer
+docker compose logs -f stream-bronze
+docker compose logs -f stream-silver
+docker compose logs -f stream-gold
+docker compose logs -f prefect-worker
+```
+
+### Kiểm Tra Silver
+
+```powershell
+cd infra
+docker compose exec stream-silver python /app/processing/check_data_silver.py
+```
+
+### Dọn Checkpoint Kafka -> Bronze Bị Lỗi
+
+```powershell
+cd infra
+docker compose exec stream-bronze python /app/processing/clean_corrupt_checkpoints.py
+```
+
+### Dọn Toàn Bộ Bronze, Silver, Gold Và Checkpoints
+
+Lệnh này xóa dữ liệu medallion trên MinIO, dùng khi muốn chạy lại từ đầu.
+
+```powershell
+cd infra
+docker compose exec stream-bronze python /app/processing/clean_old_medallion_data.py
+```
+
+### Dừng Hệ Thống
+
+```powershell
+cd infra
+docker compose down
+```
+
+Nếu muốn xóa cả Docker volumes:
+
+```powershell
+docker compose down -v
+```
+
+---
+
+## Ghi Chú Vận Hành
+
+- `stream-*` là các service chạy liên tục và có `restart: unless-stopped`.
+- Batch không upload CSV qua MinIO raw layer; code hiện đọc trực tiếp CSV local rồi ghi vào Bronze.
+- `ingestion/batch_upload.py` vẫn tồn tại như helper/legacy script, nhưng không nằm trong flow chính hiện tại.
+- MinIO bucket mặc định là `lakehouse`.
+- Credentials mặc định chỉ phù hợp cho môi trường học tập/local demo, không dùng trực tiếp cho production thật.
+
+---
+
+## Giấy Phép
+
+Dự án được phát hành theo giấy phép [MIT License](LICENSE).
 
 <div align="center">
 
-**🎓 HCMUTE — Khoa Công nghệ Thông tin**
+**HCMUTE - Khoa Công nghệ Thông tin**
 
-*Đồ án Phân tích Dữ liệu lớn — Học kỳ 2, 2025-2026*
-
-Made with ❤️ and ☕
+Đồ án Phân tích Dữ liệu lớn - Học kỳ 2, 2025-2026
 
 </div>
